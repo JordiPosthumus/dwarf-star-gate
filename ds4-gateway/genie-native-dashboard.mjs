@@ -40,6 +40,7 @@ export function nativeDashboardView(conversation,previous,now=Date.now()){
       native_observation:{observed_at:view.observed_at,stoppable:exact&&!hold},
       ...(!exact?{error:'Hermes reports an active session, but its exact turn identity is not yet available.'}:{})});
   }
+  view.native_observation_revision=digest(JSON.stringify([view.native_history_revision,view.busy,view.queued,view.native_turn_id,view.native_hold,view.pending_inputs]));
   return view;
 }
 
@@ -92,6 +93,7 @@ export class NativeDashboardChat{
     return {...this.info(),engine:'Hermes',mode:'native',available:!this.closed&&fresh&&!this.isSuspended(),suspended:this.isSuspended(),
       stop_reply_supported:true,native_observation_available:fresh,unreadable_conversations:[...this.failures],...(this.study?{study:this.study.status()}:{}),
       conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(c=>({id:c.id,title:c.title,updated_at:c.updated_at,
+        native_observation_revision:c.native_observation_revision,observed_at:c.observed_at,
         busy:this.fresh(c.id)?c.busy:null,queued:this.fresh(c.id)?c.queued:null,queue_paused:c.queue_paused,observation_available:this.fresh(c.id)}))};
   }
   async create({id=randomUUID(),title='New conversation',purpose=null}={}){

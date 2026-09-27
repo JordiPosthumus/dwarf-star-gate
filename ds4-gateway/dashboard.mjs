@@ -93,6 +93,7 @@ assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/media.js',['media.js','text/javascript']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
 assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
+assets.set('/genie-pending.js',['genie-pending.js','text/javascript']);
 assets.set('/genie-progress.js',['genie-progress.js','text/javascript']);
 assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
 assets.set('/spark-access.js',['spark-access.js','text/javascript']);

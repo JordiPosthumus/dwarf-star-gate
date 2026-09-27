@@ -203,6 +203,7 @@ assert.equal((await nativeChat.session(migratedId)).turn_id,stoppable.turn_id);
 const dashboardStopped=await dashboardRequest({action:'stop-reply',conversation_id:migratedId,reply_id:liveExecution.id});
 assert.equal(dashboardStopped.status,202,JSON.stringify(dashboardStopped));
 const stopped=dashboardStopped.body.native_hold,stopHoldId=stopped.hold_id;
+assert.equal(dashboardStopped.body.pending_inputs.filter(row=>row.state==='held').length,2,'Both stopped questions remain visible before native history admits them');
 assert.equal(stopped.state,'held');assert.equal(stopped.queued,2);assert.equal(dashboardStopped.body.queue_paused,liveExecution.id);
 write('native-dashboard-held.json',dashboardStopped.body);
 releaseModel();
@@ -225,6 +226,8 @@ for(let i=0;i<100;i++){try{heldAfterRestart=await nativeChat.session(migratedId)
 assert.equal(heldAfterRestart.hold.hold_id,stopHoldId);assert.equal(heldAfterRestart.hold.state,'held');assert.equal(heldAfterRestart.hold.queued,4);
 dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));dashboardRequest=await startDashboard();
 const heldDashboard=await dashboardRequest();assert.equal(heldDashboard.body.queue_paused,liveExecution.id);assert.equal(heldDashboard.body.queued,4);assert.equal(heldDashboard.body.queue_resume_supported,true);
+assert.deepEqual(heldDashboard.body.pending_inputs.map(row=>row.text),['Preserved before Stop: first queued question.','Preserved before Stop: second queued question.','Preserved while stopped: dashboard input.','Preserved while stopped: Telegram input.'],'All held dashboard and Telegram text remains visible after both processes restart');
+assert.ok(heldDashboard.body.pending_inputs.every(row=>row.state==='held'));
 const dashboardResumed=await dashboardRequest({action:'continue-queue',conversation_id:migratedId,expected_reply_id:liveExecution.id});assert.equal(dashboardResumed.status,202,JSON.stringify(dashboardResumed));
 const resumed=await nativeChat.resume(migratedId,stopHoldId);assert.equal(resumed.admitted,4);assert.equal(resumed.state,'released');
 assert.deepEqual(await nativeChat.resume(migratedId,stopHoldId),resumed,'Repeated continuation cannot redispatch held input');
@@ -233,6 +236,7 @@ for(let i=0;i<150;i++){continued=await nativeChat.read(migratedId,{all:true});if
 const resumedInputs=continued.messages.filter(m=>m.role==='user'&&m.text.startsWith('Preserved ')).map(m=>m.text);
 assert.deepEqual(resumedInputs,['Preserved before Stop: first queued question.','Preserved before Stop: second queued question.','Preserved while stopped: dashboard input.','Preserved while stopped: Telegram input.']);
 assert.equal(continued.native_hold,null);
+assert.equal(continued.pending_inputs.length,0,'Observed native history supersedes queued text and accepted receipts');
 assert.equal(missingNativePolicy,0);assert.equal(nativeAgentCalls,17);assert.equal(legacyHistoryRequests,14);
 const policyInputs=continued.messages.filter(m=>m.role==='user'&&m.text.startsWith('Preserved before Stop:'));
 assert.deepEqual(policyInputs.map(m=>m.research),[false,true],'Different queued research choices survive hold and gateway restart');
@@ -292,7 +296,7 @@ assert.ok(measuredDashboard.get(bulkRows[76].id).messages.at(-1).text==='Retaine
 assert.equal(measuredDashboard.status().available,true);
 const bulkRefresh={syntheticConversations:77,catalogueSize:measuredClient.bindings.size,cold:coldRefresh,warm:warmRefresh};
 write('bulk-refresh-acceptance.json',bulkRefresh);
-const result={bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===4&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+const result={native_pending_input_preserved:true,bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===4&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{if(dashboardServer){dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));}releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}

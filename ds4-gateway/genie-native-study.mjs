@@ -37,7 +37,8 @@ export class NativeGenieStudy extends GenieStudy{
       try{
         await this.chat.refresh();const status=this.status();
         if(!status.available||!status.due||status.mode!=='automatic'||['queued','working','unverified'].includes(status.last_run?.state))return;
-        if([...this.chat.sessions.values()].some(c=>c.busy||c.queued||c.queue_paused))return;
+        if([...this.chat.sessions.values()].some(c=>c.busy||c.queued||c.queue_paused||
+          c.pending_inputs?.some(input=>input.state!=='not_accepted')))return;
         await this.change({action:'study-start',expected_revision:status.revision,request_id:randomUUID()});
       }catch{this.dispatchError='Scheduled research could not be confirmed. Inspect its saved request before starting another study.';}
     })();this.ticking=run;

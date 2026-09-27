@@ -118,3 +118,13 @@ test('unknown saved dispatch and suspended or incomplete study paths cannot send
   await assert.rejects(f.chat.submit('fixture','Inspect','request-study'),/not connected yet/);
   assert.equal(f.calls.length,1);
 });
+
+
+test('idle held input changes the observation revision without requiring a transcript update',async()=>{
+ const f=fixture();f.view.busy=false;f.view.pending_inputs=[];await f.chat.refresh();
+ const before=f.chat.status().conversations[0];
+ f.view.pending_inputs=[{id:'pending',state:'held',text:'A later saved question',created_at:new Date(1000).toISOString(),media_count:0}];
+ await f.chat.refresh();const after=f.chat.status().conversations[0];
+ assert.equal(before.updated_at,after.updated_at);assert.notEqual(before.native_observation_revision,after.native_observation_revision);
+ assert.equal(after.native_observation_revision,f.chat.get('fixture').native_observation_revision);
+});

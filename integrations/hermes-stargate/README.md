@@ -224,8 +224,20 @@ Notebook contents remain private context and are not operational authorization.
 The staged dashboard facade supports New/Send/Stop/Continue and asynchronous
 study scheduling through native Hermes. Full prior-study evidence is retained
 in the native request, rather than passed only through a bounded hook preview.
-Production selection still requires pending-input display, watcher integration,
+Production selection still requires watcher integration,
 complete provider/owner configuration and a final idle history migration.
+
+Pending inputs are read from Hermes's native FIFO, buffered text and durable
+hold checkpoints. The dashboard shows saved questions separately from completed
+history, including Telegram questions received while paused. When only an
+ingress receipt exists, it says that delivery or execution is unconfirmed;
+it never invents a queued reply or replays that input. The private ingress
+journal remains the source for those receipts, indexed in memory after durable
+writes and rebuilt on restart. Canonical history supersedes its pending display.
+Fresh queue observations have their own revision, so new held questions appear
+even when the transcript has not changed. Stale observations are labelled as
+last observed. Automatic studies wait while any input remains pending or
+unconfirmed, including when the native execution itself appears idle.
 
 The session observation now includes `turn_id` only when a live native adapter
 guard matches the runner's current execution generation. The identity changes

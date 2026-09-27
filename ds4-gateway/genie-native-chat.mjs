@@ -42,6 +42,18 @@ export function readNativeGatewayDescriptor(file){
   return {...value,url:url.origin};
 }
 
+export function projectNativePending(id,rows,messages=[]){
+  if(!Array.isArray(rows))throw Error('Native pending-input evidence is unavailable.');
+  const seen=new Set(messages.filter(m=>m.role==='user').map(m=>m.native_request_id));
+  return rows.map(row=>{
+    if(!row||typeof row.id!=='string'||!row.id||typeof row.text!=='string'||!['queued','buffered','held','uncertain','accepted_unverified','not_accepted'].includes(row.state)||
+      !Number.isFinite(Date.parse(row.created_at))||!Number.isSafeInteger(row.media_count)||row.media_count<0)throw Error('Native pending-input evidence is invalid.');
+    if(row.native_request_id!==undefined&&nativeRequestId(id,row.request_id)!==row.native_request_id)throw Error('Native pending-input correlation is inconsistent.');
+    return {id:row.id,text:row.text,state:row.state,created_at:row.created_at,media_count:row.media_count,
+      ...(row.native_request_id?{native_request_id:row.native_request_id,request_id:row.request_id}:{})};
+  }).filter(row=>!row.native_request_id||!seen.has(row.native_request_id));
+}
+
 export function projectNativeConversation({id,title='Gate Genie',session,messages,pagination}){
   if(session?.state!=='observed'||!Array.isArray(messages))throw Error('Fresh native session evidence is unavailable.');
   const result=[],calls=new Map();let reply=null,pendingStudy=null;
@@ -159,7 +171,8 @@ export class NativeHermesChatClient{
     if(all&&cached&&history&&cached.route_session_id===session.session_id&&cached.view.native_session_key===b.session_key&&
       cached.view.native_session_id===history.session_id&&cached.view.native_history_revision===history.revision&&cached.view.pagination.total===history.total){
       return {...structuredClone(cached.view),title:b.title??'Gate Genie',purpose:b.purpose??null,
-        busy:session.busy,queued:session.queued,native_turn_id:session.turn_id??null,native_hold:session.hold??null,observed_at:session.observed_at};
+        busy:session.busy,queued:session.queued,native_turn_id:session.turn_id??null,native_hold:session.hold??null,observed_at:session.observed_at,
+        pending_inputs:projectNativePending(id,observation.pending_inputs,cached.view.messages)};
     }
     let page,revision=null,resolved=null,total=null,cursor=offset;const messages=[];
     do{
@@ -174,6 +187,7 @@ export class NativeHermesChatClient{
     const after=await this.session(id);
     if(after.session_id!==session.session_id)throw Error('Native session changed during observation; read it again.');
     const view={...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),purpose:b.purpose??null,created_at:stamp(b.created_at),native_history_revision:revision};
+    view.pending_inputs=projectNativePending(id,page.pending_inputs,view.messages);
     if(all&&view.history_complete)this.historyCache.set(id,{route_session_id:session.session_id,view:structuredClone(view)});
     return view;
   }

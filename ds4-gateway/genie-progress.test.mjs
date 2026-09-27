@@ -27,3 +27,26 @@ test('gateway queue/running evidence is separate from model activity and becomes
 test('a manually paused chat queue is shown as paused, not an advancing answer',()=>{assert.equal(chatProgress({state:'queued',at:0},{now:1000,paused:true}).label,'Saved · paused for your review');});
 
 test('operation tools show their own activity without inventing execution',()=>{const m={state:'working',at:0,operations:{events:[{tool:'propose_server_change',state:'reading',at:new Date(1000).toISOString()}]}};assert.equal(chatProgress(m,{now:2000}).label,'Preparing a server-change proposal');m.operations.events[0].state='complete';const p=chatProgress(m,{now:2000});assert.equal(p.label,'Server-change status returned');assert.match(p.detail,/1 tool call/);});
+
+
+import {pendingInputPresentation,nativeObservationChanged,renewNativeObservation} from './ui/genie-pending.js';
+test('pending input labels preserve delivery uncertainty and stale queue evidence',()=>{
+ const options={now:20000,observedAt:new Date(19000).toISOString()};
+ assert.match(pendingInputPresentation({state:'accepted_unverified'},options).detail,/execution is not confirmed/);
+ assert.equal(pendingInputPresentation({state:'held'},options).label,'Saved · paused');
+ assert.match(pendingInputPresentation({state:'uncertain'},options).detail,/Do not resend/);
+ assert.match(pendingInputPresentation({state:'queued'},{...options,now:40000}).label,/Last observed/);
+ assert.match(pendingInputPresentation({state:'queued'},{...options,connected:false}).detail,/unavailable/);
+});
+
+
+test('idle pending changes refresh the view; unchanged native evidence renews only its observed time',()=>{
+ const cached={native_observation_revision:'prior',observed_at:'old',pending_inputs:[{text:'retained'}]};
+ const fresh={native_observation_revision:'prior',observation_available:true,observed_at:'new'};
+ assert.equal(nativeObservationChanged(fresh,cached),false);
+ assert.deepEqual(renewNativeObservation(fresh,cached),{...cached,observed_at:'new'});assert.equal(cached.observed_at,'old');
+ assert.equal(nativeObservationChanged({...fresh,native_observation_revision:'changed'},cached),true);
+ assert.equal(nativeObservationChanged({...fresh,observation_available:false},cached),true);
+ assert.equal(renewNativeObservation({...fresh,observation_available:false},cached),cached);
+ assert.equal(renewNativeObservation({},cached),cached,'Legacy rendering is unaffected');
+});

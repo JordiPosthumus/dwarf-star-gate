@@ -581,9 +581,18 @@ observed in the transcript. This is not proof of model or fleet completion.
 
 The pinned gateway fixture exercises those actual dashboard HTTP routes,
 restarts both sides while held, and verifies four saved questions run once each
-in order, and exercises New/Send with repeated and held input. Pending-input
-display, watcher freshness, complete profile migration and
+in order, and exercises New/Send with repeated and held input. Watcher
+freshness, complete profile migration and
 exclusive-poller cutover must be finished before selecting it in production.
+
+Queued, buffered and held questions appear separately from canonical replies,
+using actual native queue and checkpoint observations. Receipt-only inputs are
+labelled as accepted but unconfirmed, uncertain, or not accepted. They remain
+visible after restart without resending them. Fresh observation revisions update
+paused conversations even when their transcript has not changed; stale status
+is explicitly labelled. Automatic studies wait for unresolved input across all
+observed conversations. Study context remains expandable without requiring a
+fleet snapshot.
 
 Native dispatch receipts retain both the caller's original request identifier
 and the derived native dispatch UUID. Dashboard history exposes the original

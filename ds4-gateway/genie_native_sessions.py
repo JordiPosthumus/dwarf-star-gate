@@ -165,6 +165,8 @@ def native_display_page(db, session_id, offset, limit, revision=None, *, request
         raise ValueError('Native display changed during observation; read it again')
     return {'state': 'observed', 'session_id': resolved, 'revision': digest,
             'data': rows[offset:offset + limit],
+            'observed_request_ids': [row['dsg_request']['request_id'] for row in rows
+                                     if isinstance(row.get('dsg_request', {}).get('request_id'), str)],
             'pagination': {'offset': offset, 'limit': limit, 'returned': len(rows[offset:offset + limit]),
                            'total': len(rows), 'order': 'oldest'},
             'scope': 'Native Hermes display lineage, including compacted history; reasoning is excluded.'}
@@ -178,6 +180,17 @@ class NativeSessionRequests:
         self.allowed = frozenset(allowed)
         self.inject = inject
         self.lock = threading.Lock()
+        # Index the existing durable ingress journal, not a second transcript.
+        # Subsequent writes update this index only after private_save succeeds.
+        self.receipt_records = {}
+        for file in self.directory.glob('*.json'):
+            canonical_uuid(file.stem)
+            record = self._read(file)
+            if (not isinstance(record, dict) or record.get('request_id') != file.stem
+                    or record.get('fingerprint') != request_fingerprint(record)
+                    or record.get('state') not in {'dispatching', 'accepted_unverified', 'not_accepted', 'unknown'}):
+                raise ValueError('Native dispatch journal is inconsistent; preserve it for reconciliation')
+            self.receipt_records[file.stem] = record
 
     def _path(self, request_id):
         canonical_uuid(request_id)
@@ -190,6 +203,19 @@ class NativeSessionRequests:
 
     def _save(self, file, value):
         private_save(file, value)
+        self.receipt_records[value['request_id']] = json.loads(json.dumps(value))
+
+    def pending_receipts(self, session_key):
+        if session_key not in self.allowed:
+            raise ValueError('Use an explicitly connected native session')
+        with self.lock:
+            records = [record for record in self.receipt_records.values() if record['session_key'] == session_key
+                       and 'source_request_id' in record]
+            return [{'id': record['request_id'], 'native_request_id': record['request_id'],
+                     'request_id': record['source_request_id'], 'text': record['message'],
+                     'created_at': record['created_at'], 'media_count': 0,
+                     'state': record['state'] if record['state'] in {'accepted_unverified', 'not_accepted'} else 'uncertain'}
+                    for record in sorted(records, key=lambda row: (row['created_at'], row['request_id']))]
 
     def transcript_metadata(self, session_key, content):
         """Recover correlation from the saved dispatch, never from model prose."""
@@ -370,7 +396,9 @@ def register_native_sessions(ctx):
             after = await self.observe_session({'action': 'session', 'session_key': key})
             if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
                 raise ValueError('Native session changed during observation; read it again')
-            return {**page, 'session_key': key}
+            from genie_native_pending import combine_pending_inputs
+            return {**page, 'session_key': key, 'pending_inputs': combine_pending_inputs(
+                after['pending_inputs'], self.requests.pending_receipts(key), set(page['observed_request_ids']))}
 
         async def observe_many(self, payload):
             keys = payload.get('session_keys')
@@ -396,7 +424,10 @@ def register_native_sessions(ctx):
                     after = await self.observe_session({'action': 'session', 'session_key': key})
                     if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
                         raise ValueError('Native session changed during observation')
-                    results.append({**after, 'history': {'session_id': page['session_id'],
+                    from genie_native_pending import combine_pending_inputs
+                    results.append({**after, 'pending_inputs': combine_pending_inputs(
+                        after['pending_inputs'], self.requests.pending_receipts(key), set(page['observed_request_ids'])),
+                                    'history': {'session_id': page['session_id'],
                                                        'revision': page['revision'], 'total': page['pagination']['total']}})
                 except Exception:
                     results.append({'state': 'unavailable', 'session_key': key})
@@ -421,7 +452,9 @@ def register_native_sessions(ctx):
                 return {'state': 'unavailable', 'session_key': key}
             from genie_native_controls import controls_enabled, get_native_controls
             control = get_native_controls(runner) if controls_enabled() else None
+            from genie_native_pending import pending_native_inputs
             return {'state': 'observed', 'session_key': key, 'session_id': entry.session_id,
+                    'pending_inputs': pending_native_inputs(runner, adapter, entry, control, self.requests),
                     'busy': key in active or bool(entry.active_turn_token),
                     'hold': control.observe(key) if control else None,
                     'turn_id': (control.identities if control else self.turn_identities).current(runner, adapter, key),

@@ -73,3 +73,14 @@ test('concurrent study starts respect schedule revision and cannot create two st
   const results=await Promise.allSettled([f.chat.study.change({action:'study-start',expected_revision:0,request_id:randomUUID()}),f.chat.study.change({action:'study-start',expected_revision:0,request_id:randomUUID()})]);
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(f.calls.length,1);
 });
+
+test('automatic studies wait for unconfirmed input even when native execution appears idle',async t=>{
+  const f=fixture(t);
+  await f.chat.study.change({action:'study-start',expected_revision:0,request_id:randomUUID()});
+  await f.chat.study.change({action:'study-schedule',expected_revision:1,interval_days:1,mode:'automatic'});
+  f.time+=86400001;const view=f.views.values().next().value;
+  for(const state of ['queued','buffered','held','uncertain','accepted_unverified']){
+    view.pending_inputs=[{state}];await f.chat.tick();assert.equal(f.calls.length,1,state);
+  }
+  view.pending_inputs=[{state:'not_accepted'}];await f.chat.tick();assert.equal(f.calls.length,2);
+});

@@ -6,9 +6,9 @@ import path from 'node:path';
 import http from 'node:http';
 import {createHash} from 'node:crypto';
 import {studyEvidence} from './genie-study.mjs';
-import {NativeHermesChatClient,nativeRequestId,projectNativeConversation,readNativeGatewayDescriptor} from './genie-native-chat.mjs';
+import {NativeHermesChatClient,nativeRequestId,projectNativePending,projectNativeConversation,readNativeGatewayDescriptor} from './genie-native-chat.mjs';
 
-const observed={state:'observed',session_key:'agent:main:telegram:dm:fixture',session_id:'native-session',busy:false,queued:0,observed_at:'2026-09-27T05:00:00Z'};
+const observed={state:'observed',session_key:'agent:main:telegram:dm:fixture',session_id:'native-session',busy:false,queued:0,pending_inputs:[],observed_at:'2026-09-27T05:00:00Z'};
 const rows=[
   {id:1,role:'user',content:'Inspect the service.',timestamp:100},
   {id:2,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'tool_call',arguments:JSON.stringify({name:'inspect_fleet_service',arguments:{worker:'fixture'}})}}],finish_reason:'tool_calls',timestamp:101,reasoning_content:'private reasoning'},
@@ -81,7 +81,7 @@ async function fixture(t){
     if(body?.action==='status')return res.end(JSON.stringify({state:'unknown',request_id:body.request_id}));
     assert.equal(body?.action,'transcript');
     const data=rows.slice(body.offset,body.offset+body.limit);
-    const page={state:'observed',session_key:observed.session_key,session_id:'native-session',revision:f.history?.revision??(f.historyChanged&&body.offset>0?'b':'a').repeat(64),data,pagination:{offset:body.offset,limit:body.limit,returned:data.length,total:rows.length,order:'oldest'}};
+    const page={state:'observed',pending_inputs:f.observation?.pending_inputs??[],session_key:observed.session_key,session_id:'native-session',revision:f.history?.revision??(f.historyChanged&&body.offset>0?'b':'a').repeat(64),data,pagination:{offset:body.offset,limit:body.limit,returned:data.length,total:rows.length,order:'oldest'}};
     if(f.badPage)page.pagination.returned=0;
     res.end(JSON.stringify(page));
   });
@@ -229,4 +229,15 @@ test('native connection diagnosis stays an observation with its unresolved cause
   {id:2,role:'tool',timestamp:101,tool_call_id:'diagnosis',content:JSON.stringify({state:'observed',connection_state:'authentication_unavailable',cause:'undetermined',physical_access_required:null})}]});
  assert.equal(view.messages[0].spark_setup.events[0].result.cause,'undetermined');
  assert.equal(view.messages[0].spark_setup.events[0].result.physical_access_required,null);
+});
+
+
+test('pending acceptance is distinct from queue proof and disappears only under matching native history',()=>{
+ const id='conversation',request='pending-source-12345',native=nativeRequestId(id,request);
+ const row={id:native,native_request_id:native,request_id:request,text:'Saved question',created_at:'2026-09-27T10:00:00Z',media_count:0,state:'accepted_unverified'};
+ assert.equal(projectNativePending(id,[row])[0].state,'accepted_unverified');
+ assert.deepEqual(projectNativePending(id,[row],[{role:'user',native_request_id:native}]),[]);
+ assert.throws(()=>projectNativePending('different',[row]),/correlation/);
+ assert.throws(()=>projectNativePending(id,undefined),/unavailable/);
+ assert.throws(()=>projectNativePending(id,[{...row,state:'complete'}]),/invalid/);
 });
