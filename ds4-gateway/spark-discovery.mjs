@@ -312,7 +312,28 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
     const result=JSON.parse(fs.readFileSync(saved,'utf8'));
     return result.state==='running'?{...result,state:'observation_lost',scope:'The earlier read-only scan is no longer observed. No enrollment or setup was performed.'}:result;
   };
-  return {status,async accessCandidates({scan_id}={}){
+  const connectionProof=async(connection)=>{
+    if(!aliasPattern.test(connection??'')||!(await aliases()).includes(connection))throw Error('Choose an existing configured SSH connection.');
+    const resolved=await resolve(connection);
+    if(net.isIP(resolved.hostname)!==4||!userPattern.test(resolved.username??''))throw Error('Retained connection repair requires the same configured IPv4 destination and username.');
+    const proofs=[];
+    for(const id of fs.readdirSync(directory).filter(name=>scanIdPattern.test(name))){
+      const scan=status({scan_id:id});
+      if(scan.state!=='complete'||!scan.configured_aliases?.includes(connection))continue;
+      const row=scan.known_hosts?.find(h=>h.ssh===connection&&h.destination===resolved.hostname&&/^[a-f0-9]{64}$/.test(h.identity??''));
+      if(!row)continue;
+      const knownHosts=path.join(directory,id,'known_hosts'),stat=fs.lstatSync(knownHosts);
+      if(!stat.isFile()||stat.isSymbolicLink()||stat.uid!==process.getuid()||(stat.mode&0o077))throw Error('Retained host-key evidence is not a private owned file; nothing changed.');
+      proofs.push({scan_id:id,connection,identity:row.identity,host:resolved.hostname,username:resolved.username,knownHosts,
+        known_hosts_sha256:createHash('sha256').update(fs.readFileSync(knownHosts)).digest('hex'),
+        scan_sha256:createHash('sha256').update(fs.readFileSync(path.join(directory,id,'result.json'))).digest('hex'),observed_at:scan.observed_at});
+    }
+    proofs.sort((a,b)=>Date.parse(b.observed_at)-Date.parse(a.observed_at));
+    if(!proofs.length)throw Error('No retained authenticated discovery identity matches this configured connection. Discovery or explicit access reconciliation is required.');
+    if(new Set(proofs.map(p=>p.identity)).size!==1)throw Error('Retained authenticated hardware identities conflict for this connection; nothing changed.');
+    return proofs[0];
+  };
+  return {status,connectionProof,async configuredConnections(){return [...new Set(await aliases())].sort();},async accessCandidates({scan_id}={}){
     const scan=status({scan_id});
     if(scan.state!=='complete'||!scanIdPattern.test(scan.scan_id??''))throw Error('Ask Genie to finish a discovery scan before authorizing initial access.');
     if(JSON.stringify([...new Set(await aliases())].sort())!==JSON.stringify(scan.configured_aliases))throw Error('A fresh discovery scan is needed after configured connections changed.');

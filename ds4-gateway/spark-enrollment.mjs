@@ -5,7 +5,7 @@ import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {randomUUID} from 'node:crypto';
-import {sparkIdentity} from './spark-discovery.mjs';
+import {sparkIdentity,discoverySSHReason} from './spark-discovery.mjs';
 import {promoteDiscoveryTrust} from './spark-discovery-trust.mjs';
 const execute=promisify(execFile);
 const idPattern=/^[a-zA-Z0-9][\w-]{0,63}$/;
@@ -34,11 +34,11 @@ export async function inspectNewSpark(ssh,{directory,knownHosts,strict=false,com
   const known=path.join(os.homedir(),'.ssh','known_hosts');
   if(!knownHosts&&!strict&&fs.existsSync(known)){const backup=path.join(directory,`known-hosts-before-${Date.now()}-${randomUUID()}`);fs.copyFileSync(known,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
   try{
-    const {stdout}=await command('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=10',...(knownHosts?['-o',`UserKnownHostsFile=${knownHosts}`,'-o','GlobalKnownHostsFile=/dev/null','-o','KnownHostsCommand=none','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),'-o',`StrictHostKeyChecking=${knownHosts||strict?'yes':'accept-new'}`,'--',ssh,`python3 -I -B -c ${quote(probe)}`],{timeout:45000,maxBuffer:65536});
+    const {stdout}=await command('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=10',...(knownHosts?['-o',`UserKnownHostsFile=${knownHosts}`,'-o','GlobalKnownHostsFile=/dev/null','-o','KnownHostsCommand=none','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),...(strict&&!knownHosts?['-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),'-o',`StrictHostKeyChecking=${knownHosts||strict?'yes':'accept-new'}`,'--',ssh,`python3 -I -B -c ${quote(probe)}`],{timeout:45000,maxBuffer:65536});
     const result=JSON.parse(stdout);
     if(typeof result.home!=='string'||!result.home.startsWith('/')||result.home.includes('\n')||result.home.split('/').includes('..'))throw Error('Invalid home directory');
     return result;
-  }catch{throw Error('Could not inspect this Spark through SSH. Check its address, username and SSH key access. A changed host key must be checked explicitly. No setup was started; do not put passwords or private keys in chat.');}
+  }catch(error){throw Object.assign(Error('Could not inspect this Spark through SSH. Check its address, username and SSH key access. A changed host key must be checked explicitly. No setup was started; do not put passwords or private keys in chat.'),{discovery_reason:discoverySSHReason(error)});}
 }
 export function createSparkEnrollment({directory,targets:staticTargets={},workers=async()=>[],inspect=inspectNewSpark,resolve=sshDestination,discovery=null,promote=promoteDiscoveryTrust}){
   fs.mkdirSync(directory,{recursive:true,mode:0o700});

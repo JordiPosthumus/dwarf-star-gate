@@ -42,6 +42,19 @@ test('unresolved old restoration remains busy beyond the public history limit',a
   fs.writeFileSync(path.join(folder,'run.status.json'),JSON.stringify({trial_id,worker:'glm53f-sparks34',state:i?'complete':'restoration_required',started_at:String(i).padStart(3,'0')}));
  }
  assert.equal(manager.status().length,32);assert.equal(manager.busy('glm53f-sparks34'),true);
+ const index=manager.index();assert.equal(index.filter(row=>row.kind==='recipe_trial').length,35);
+ assert.equal(index.find(row=>row.kind==='recipe_trial'&&row.state==='restoration_required').lookup.trial_id,'00000000-2284-4b34-a479-aab1e8d51513');
+ assert.equal(f.launched.length,0);
+});
+test('recipe index discovers unused pinned profiles without exposing plan paths or secrets',t=>{
+ const f=fixture(t),manager=createRecipeTrials(f);
+ const [row]=manager.index();assert.equal(row.profile,'fixture');assert.equal(row.worker,'glm53f-sparks34');assert.equal(row.state,'verified_plan');
+ assert.equal(row.plan_sha256,f.config.recipe_trials.fixture.plan_sha256);assert.equal(row.plan_kind,'glm53-spark-pair-long-coding');
+ assert.doesNotMatch(JSON.stringify(row),/fixture-host|recipe_root|plan_file/);
+ fs.appendFileSync(f.config.recipe_trials.fixture.plan_file,' ');
+ assert.deepEqual(manager.index(),[{kind:'recipe_profile',profile:'fixture',state:'unavailable',scope:'Enrolled plan unreadable or changed. No execution is authorized by this observation.'}]);
+ fs.unlinkSync(f.config.recipe_trials.fixture.plan_file);assert.equal(manager.index()[0].state,'unavailable');
+ assert.equal(f.launched.length,0);
 });
 test('local MTP trial must match every private inspection binding and reserves M3 hardware',async t=>{
  const f=fixture(t),plan={schema:1,kind:'omlx-glm53-mtp-depth',worker:'glm53f-m3',root:'/fixture/m3',url:'http://127.0.0.1:8013/v1',api_key_file:'/fixture/private-key'};
@@ -154,4 +167,22 @@ test('exact trial status includes older evidence outside the recent global windo
  assert.equal(manager.status().length,32);assert.equal(manager.status().some(r=>r.trial_id===id),false);
  assert.deepEqual(manager.status(id).map(r=>r.trial_id),[id]);
  assert.throws(()=>manager.status('../anything'),/exact trial UUID/);
+});
+
+
+test('published recipe root is reported as a static binding mismatch before any native action',async t=>{
+ const f=fixture(t),manager=createRecipeTrials(f);
+ assert.equal(manager.index()[0].inspection_binding.state,'matched');
+ f.config.genie_chat.inspection.workers['glm53f-sparks34'].recipe_root='/fixture/published-rollout/candidate';
+ const evidence=manager.index()[0].inspection_binding;
+ assert.equal(evidence.state,'changed');assert.deepEqual(evidence.different_fields,['recipe_root']);
+ assert.match(evidence.scope,/Static enrolled configuration/);
+ assert.doesNotMatch(JSON.stringify(evidence),/fixture-host|published-rollout|private-key/);
+ await assert.rejects(manager.start({profile:'fixture',stage:'prepare',trial_id:id}),error=>{
+  assert.match(error.message,/changed fields: recipe_root/);
+  assert.match(error.message,/not an SSH or health check/);
+  assert.match(error.message,/No native command was issued/);
+  return true;
+ });
+ assert.equal(f.launched.length,0);assert.equal(fs.existsSync(f.folder),false);
 });

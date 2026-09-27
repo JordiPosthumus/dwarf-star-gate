@@ -8,6 +8,24 @@ recovery. Each capability has its own switch. Configuration changes require
 separate approval of the exact proposed plan.
 Existing background reviews and their handling of direct questions are unchanged.
 
+Invalid local fleet-status arguments report that no endpoint request was sent,
+with the exact correction needed. A transport failure still reports uncertain
+observation; it must not be mistaken for local input rejection or replayed as a
+new fleet action.
+
+Recipe discovery separately reports whether the pinned plan matches its current
+inspection binding. A changed recipe directory is a static configuration mismatch;
+it does not establish an SSH, host-key, container or serving-health failure. A
+rejected baseline never starts a native command.
+
+Completed chat replies also retain **Hermes dispatch evidence**, including
+discovery-wrapper failures that happened before a DSG domain handler ran. This
+collapsed detail distinguishes returned tool results, errors and missing results.
+It retains recognized tool names and result fingerprints, not raw arguments,
+credentials or result text. A returned result does not prove a fleet operation
+completed; check its separate domain receipt. If Hermes supplies no dispatch
+transcript, the detail reports unavailable evidence rather than zero activity.
+
 ## Try the interface without a model
 
 With Node 22.22.2 or later:
@@ -497,3 +515,46 @@ unfinished reply interrupted; it never replays the request. A newer conversation
 save supersedes older checkpoints. Unreadable checkpoints are preserved and
 reported without hiding healthy conversations. Back up the whole chat directory,
 including checkpoints, when preserving an in-progress reply.
+
+
+### Existing Spark connection repair
+
+`spark_connection_status` lists configured connection names and retained
+hardware-verified discovery evidence, or reads one saved repair receipt.
+`repair_spark_connection` takes that existing connection and a stable repair UUID.
+It selects the newest authenticated retained scan matching the current IPv4
+configuration, refuses conflicting historical identities, rechecks the pinned
+host key and hardware identity, backs up normal `known_hosts` before adding only
+missing trust, and verifies the same alias through ordinary strict SSH. Alias
+identity files and routing are preserved. It never replaces conflicting keys,
+changes SSH configuration, or modifies remote services, models or firmware.
+
+The existing Spark setup capability and testing-mode gates apply. A stopped chat
+does not cancel an accepted connection operation. Dashboard restart guards check
+connection work independently. Receipts distinguish failure before promotion
+from an unconfirmed promotion or final verification; after uncertainty/restart,
+the same UUID only performs read-only normal-path reconciliation. Completed or
+failed IDs return their original receipts. New IDs cannot bypass an unresolved
+repair. A confirmed connection is not a recovered or qualified model service.
+
+This path requires a retained authenticated discovery identity and its private
+host-key receipt. An unauthenticated scan pin cannot establish that identity.
+Connection drift, missing evidence and unsupported destinations remain explicit
+failures, with no blind acceptance or fallback that weakens host-key checking.
+
+
+`inspect_spark_connection` adds read-only authentication diagnosis for those
+existing connections. It runs in the gateway process using the configured alias
+and retained authenticated host pin. It reports configured key-file availability,
+agent configuration, host-key verification, key offers, server acceptance, local
+signing failure and current hardware identity when accessible. Private key
+contents, paths, agent identities and raw SSH logs are not returned. No trust,
+SSH configuration, remote authorized keys or service is changed. Inspection
+permission controls this tool independently from permission to repair.
+
+A rejected login does not identify whether the cause is client credentials, an
+agent, account policy or remote authorized keys. The result leaves that cause
+undetermined, and does not infer a need for physical access or reboot. A failed
+network observation is likewise not proof of machine failure. When authentication
+succeeds, the retained hardware identity must still match; connection success is
+not evidence that a model service or cache has recovered.

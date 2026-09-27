@@ -57,3 +57,9 @@ test('concurrent owner edits to normal trust are preserved and stop promotion',a
   }}),/trust changed during enrollment/);
   assert.equal(fs.readFileSync(f.known,'utf8'),before+addition);
 });
+test('configured alias promotion retains alias-specific SSH settings and refuses destination drift',async t=>{
+  const f=fixture(t);f.input.ssh='FixtureSpark';f.input.configuredAlias=true;
+  const result=await f.promote();assert.equal(result.changed,true);
+  assert.ok(f.calls.some(c=>c.cmd==='ssh'&&c.args.includes('FixtureSpark')));
+  const before=fs.readFileSync(f.known);f.configure('HostName 192.0.2.11');await assert.rejects(f.promote(),/Existing SSH configuration/);assert.ok(fs.readFileSync(f.known).equals(before));
+});
