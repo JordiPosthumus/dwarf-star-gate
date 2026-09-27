@@ -145,6 +145,7 @@ test('actual Hermes exposes and executes standalone recovery, power and admissio
    assert.equal(provider.info.can_act,true);
    const chat=new GenieChat({directory:path.join(directory,'chat'),provider});const c=chat.create();chat.submit(c.id,'Read status through the enrolled tool.','status-fixture');await chat.idle();
    const reply=chat.get(c.id).messages[1];assert.equal(reply.state,'complete',JSON.stringify(reply));assert.equal(toolCalls,1);assert.equal(modelCalls,2);assert.equal(reply[capability].events.find(e=>e.state==='complete').result.fixture,'actual registered tool');
+   const dispatch=reply.dispatch.calls.find(call=>call.target===tool||call.tool===tool);assert.equal(dispatch.state,'returned');assert.match(dispatch.result_sha256,/^[a-f0-9]{64}$/);
   });
  }
 });
