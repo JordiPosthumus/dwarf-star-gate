@@ -28,6 +28,14 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     if(trial_id!==undefined&&!uuid.test(trial_id))throw Error('Use one exact trial UUID');
     return allStatus().filter(r=>trial_id===undefined||r.trial_id===trial_id).sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
   };
+  function inspectionBinding(plan){
+    const target=config.genie_chat?.inspection?.workers?.[plan.worker];
+    const fields=plan.kind==='omlx-glm53-mtp-depth'
+      ? ['kind','root','url','api_key_file'].filter(key=>target?.[key]!== (key==='kind'?'omlx-local':plan[key]))
+      : [...(!target?.ssh?.includes(plan.ssh)?['ssh']:[]),...(target?.recipe_root!==plan.recipe_root?['recipe_root']:[])];
+    return {state:!target?'missing':fields.length?'changed':'matched',different_fields:fields,
+      scope:'Static enrolled configuration comparison only. No SSH, Docker or serving-health check was performed.'};
+  }
   const index=()=>{
     // Discovery must include enrolled plans even before their first execution,
     // and old operations beyond the dashboard's recent-history window.
@@ -39,7 +47,7 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
         const plan=JSON.parse(bytes);
         if(plan.schema!==1||typeof plan.worker!=='string'||typeof plan.kind!=='string')throw Error('Invalid plan');
         return {kind:'recipe_profile',profile,worker:plan.worker,plan_kind:plan.kind,plan_sha256:binding.plan_sha256,
-          state:'verified_plan',...(typeof plan.qualification_mode==='string'?{qualification_mode:plan.qualification_mode}:{})};
+          state:'verified_plan',inspection_binding:inspectionBinding(plan),...(typeof plan.qualification_mode==='string'?{qualification_mode:plan.qualification_mode}:{})};
       }catch{return {kind:'recipe_profile',profile,state:'unavailable',scope:'Enrolled plan unreadable or changed. No execution is authorized by this observation.'};}
     });
     for(const receipt of allStatus())entries.push({kind:'recipe_trial',...Object.fromEntries(
@@ -79,8 +87,8 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
       if(['gateway/acquire.intent.json','prepare.result.json','rollout.result.json','publication/result.json'].some(name=>fs.existsSync(path.join(folder,name))))throw Error('Preparation advanced beyond copying; inspect its original operation');
       resume=true;
     }else if(expected_finished_at!==undefined)throw Error('Unknown rollout to resume');
-    const target=config.genie_chat?.inspection?.workers?.[plan.worker];
-    if(localMtp?target?.kind!=='omlx-local'||target.root!==plan.root||target.url!==plan.url||target.api_key_file!==plan.api_key_file:!target?.ssh?.includes(plan.ssh)||target.recipe_root!==plan.recipe_root)throw Error('Recipe plan does not match the enrolled worker inspection binding');
+    const inspection=inspectionBinding(plan);
+    if(inspection.state!=='matched')throw Error('Recipe plan does not match the enrolled worker inspection binding ('+inspection.state+' fields: '+inspection.different_fields.join(', ')+'). This is a local configuration comparison, not an SSH or health check. No native command was issued. Reconcile this plan with the current serving configuration; do not redeploy an old baseline to bypass the mismatch.');
     if(powerBusy(plan.worker)||busy(plan.worker))throw Error('An operation on this hardware is already running or needs restoration; inspect its existing receipt');
     if(stage==='inspect'){
       const preparation=read(path.join(folder,'prepare.status.json'));
