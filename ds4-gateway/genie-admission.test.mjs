@@ -192,6 +192,19 @@ test('native checks resolve private credentials without exposing them and reject
  await assert.rejects(drift.tool({action:'verify-worker',worker:worker.id,check:'cache',action_id:ACTION_ID}),/identity changed/);
 });
 
+test('routed context stays asynchronous and never resolves native credentials or replays an interrupted request',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'context-receipt-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ let release,calls=0;
+ const options={config:{state_file:path.join(dir,'state.json')},control:async()=>{throw Error('No mutations');},
+  read:async()=>({workers:[{id:'fixture-worker',url:'http://127.0.0.1:1/v1',served_model:'fixture',context_length:400000,is_healthy:true,drained:false}]}),
+  resolveNativeWorker:async()=>{throw Error('Routed checks must not open native credentials');},
+  checkRunner:async({check,onSample})=>{assert.equal(check,'routed-context');calls++;onSample({label:'context-request-intent',call_id:'fixture-call'});await new Promise(r=>{release=r;});return {state:'passed'};}};
+ const tools=createAdmissionTools(options),input={action:'verify-worker',worker:'fixture-worker',check:'routed-context',action_id:ACTION_ID};
+ assert.equal((await tools.tool(input)).state,'running');assert.equal((await tools.tool(input)).samples[0].call_id,'fixture-call');assert.equal(calls,1);
+ const reloaded=createAdmissionTools(options);assert.equal((await reloaded.tool(input)).state,'unverified');assert.equal(calls,1);
+ release();await new Promise(r=>setImmediate(r));assert.equal((await tools.tool(input)).state,'passed');
+});
+
 test('an interrupted durable admission is visible and never replayed or replaced',async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'admission-interrupted-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  fs.mkdirSync(path.join(dir,'genie'));
