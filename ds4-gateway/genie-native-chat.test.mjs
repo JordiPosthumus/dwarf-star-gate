@@ -127,3 +127,21 @@ test('native inspection and research receipts remain usable by existing study ev
   assert.equal(evidence.workers[0].record_read_at,'record-time');assert.equal(evidence.workers[0].live_read_at,'live-time');
   assert.equal(evidence.workers[0].source_files[0].sha256,'fixture-sha');assert.deepEqual(evidence.pages_read,['https://example.invalid/docs']);
 });
+
+test('native creation and discovery cannot replace an existing Telegram binding',async t=>{
+  const f=await fixture(t),id='22222222-2222-4222-8222-222222222222';
+  f.client.bindings.set(id,{id,session_key:observed.session_key});
+  const before=f.calls.length;
+  await assert.rejects(f.client.create({id}),/conflicts/);
+  assert.equal(f.calls.length,before,'Identity conflict is rejected before native creation');
+  const row={id,title:'New conversation',purpose:null,session_key:`agent:main:stargate_control:dm:${id}`};
+  f.client.control=async()=>({state:'observed',conversations:[row]});
+  await assert.rejects(f.client.discover(),/conflicts/);
+  assert.equal(f.client.binding(id).session_key,observed.session_key);
+  f.client.bindings.delete(id);
+  assert.deepEqual((await f.client.discover()).map(b=>b.id),[id]);
+  f.client.control=async()=>({state:'observed',conversations:[row,row]});
+  await assert.rejects(f.client.discover(),/duplicate/);
+  f.client.control=async()=>({state:'unknown'});
+  await assert.rejects(f.client.create({id}),/creation is unconfirmed/);
+});

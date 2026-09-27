@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from genie_native_sessions import NativeSessionRequests
+from genie_native_sessions import NativeSessionRequests, NativeConversationCatalog
 
 
 class NativeSessions(unittest.TestCase):
@@ -71,6 +71,30 @@ class NativeSessions(unittest.TestCase):
         self.directory.chmod(0o755)
         with self.assertRaises(ValueError):
             NativeSessionRequests(self.directory, ['owner-session'], self.inject)
+
+    def test_native_conversation_metadata_survives_restart_without_copying_history(self):
+        folder=Path(self.temp.name)/'conversations'
+        catalog=NativeConversationCatalog(folder, 'owner-fixture')
+        row=catalog.prepare(self.payload['request_id'], 'Setup research', 'setup_research')
+        restarted=NativeConversationCatalog(folder, 'owner-fixture')
+        self.assertEqual(restarted.prepare(self.payload['request_id'], 'Setup research', 'setup_research'), row)
+        self.assertNotIn('messages', row)
+        self.assertEqual((folder/(row['id']+'.json')).stat().st_mode & 0o777, 0o600)
+        with self.assertRaises(ValueError):
+            restarted.prepare(self.payload['request_id'], 'Different title', None)
+        with self.assertRaises(ValueError):
+            NativeConversationCatalog(folder, 'different-owner')
+        self.inject.assert_not_called()
+
+    def test_conversation_creation_requires_configured_owner_and_exact_metadata(self):
+        folder=Path(self.temp.name)/'conversations'
+        with self.assertRaises(ValueError):
+            NativeConversationCatalog(folder, None).prepare(self.payload['request_id'], 'Title', None)
+        catalog=NativeConversationCatalog(folder, 'owner-fixture')
+        for identity,title,purpose in [('../escape','Title',None),(self.payload['request_id'],'',None),(self.payload['request_id'],'Title','unknown')]:
+            with self.subTest(identity=identity,title=title,purpose=purpose), self.assertRaises(ValueError):
+                catalog.prepare(identity,title,purpose)
+        self.assertEqual(list(folder.glob('*.json')), [])
 
 
 if __name__ == '__main__':

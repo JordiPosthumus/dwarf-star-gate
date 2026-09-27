@@ -2,6 +2,7 @@ import {test} from 'node:test';import assert from 'node:assert/strict';
 import {createNativeHermesContext,publishNativeHermesDescriptor} from './genie-native-context.mjs';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createDashboard} from './dashboard.mjs';
+import {GenieMemory} from './genie-memory.mjs';
 test('native Hermes keeps current evidence and domain controls across capability changes',async()=>{
  let inspection=false,testing=false;
  const bridge=createNativeHermesContext({snapshot:()=>({time:123,gateway:{workers:[{id:'fixture',physical_machines:['machine-a'],is_healthy:true}],genie_capabilities:{inspection}}}),tools:()=>({inspection:{workers:{}},spark_setup:{url:'private'},power:{url:'private'},unknown:{}}),isEnabled:key=>key==='inspection'&&inspection,isTesting:()=>testing});
@@ -45,4 +46,21 @@ test('real dashboard exposes native context only through its private authenticat
  assert.equal(value.tools.power.token,'private-power-token');assert.equal(value.schema,1);
  const publicStatus=await(await fetch(native.toolConfig.url.replace('/api/genie/native-tools','/api/status'))).text();
  assert.ok(!publicStatus.includes('private-power-token'));
+});
+
+test('native context uses current shared notebook revisions and respects memory being disabled',async t=>{
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-native-notebook-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+ const memory=new GenieMemory(path.join(fs.realpathSync(directory),'memory'));memory.setEnabled(true);
+ const snapshot={time:1000,gateway:{workers:[{id:'fixture'}]},genie:{memory:{enabled:true}}};
+ memory.saveOperatorNote({worker:'fixture',text:'PRIVATE_NOTE: preserve the configured cache.'},snapshot);
+ const bridge=createNativeHermesContext({snapshot:()=>snapshot,tools:()=>({}),notebook:memory});
+ const before=fs.readFileSync(memory.file);
+ const context=(await bridge.tool({action:'context'})).context;
+ assert.equal(context.operational_notebook.included,true);assert.match(JSON.stringify(context.operational_notebook.notes),/PRIVATE_NOTE/);
+ assert.deepEqual(fs.readFileSync(memory.file),before,'Observation does not write the notebook');
+ memory.setEnabled(false);
+ const off=(await bridge.tool({action:'context'})).context.operational_notebook;
+ assert.equal(off.included,false);assert.deepEqual(off.notes,[]);assert.equal(off.reason,'memory_disabled');
+ const unconfigured=createNativeHermesContext({snapshot:()=>snapshot,tools:()=>({})});
+ assert.equal((await unconfigured.tool({action:'context'})).context.operational_notebook.configured,false);
 });

@@ -160,3 +160,32 @@ controls remain required before cutover.
 branch exclusion, and revision changes in a disposable database. Run it with the
 installed native runtime's Python and its source directory on `PYTHONPATH`; the
 test is explicitly skipped when that runtime is unavailable.
+
+## Native dashboard conversations
+
+To permit new dashboard conversations, set
+`platforms.stargate_control.extra.dashboard_owner_id` to the authorized owner ID
+and include that ID in `DSG_DASHBOARD_ALLOWED_USERS` for this private runtime.
+Set `platform_toolsets.stargate_control: [stargate_native]`, matching the other
+Genie channels. Without an explicitly authorized owner, creation is rejected.
+
+The authenticated control action `create` takes an `id` UUID, `title`, and
+`purpose` (null or `setup_research`). It asks Hermes's existing SessionStore to
+create or look up a separate native dashboard session. Exact retries keep the
+same identity; changed metadata is rejected. Private records contain only UI
+identity, title, purpose and ownership, with all message history in Hermes.
+The `conversations` action discovers these bindings after a dashboard restart.
+
+Dashboard-only replies remain in their native transcript. The shared Telegram
+binding continues to reply through Telegram. Both run through Hermes's native
+scheduler, including its FIFO overflow queue; reported queue depth includes all
+pending native instructions. No second agent execution loop is introduced.
+
+The domain context endpoint shares the existing operational notebook when
+`genie_chat.operational_notebook` is enabled. It uses the same retrieval bounds,
+note revisions and memory switch as existing chat. Each context read refreshes
+the notebook; disabled or unavailable memory never reuses an earlier snapshot.
+Notebook contents remain private context and are not operational authorization.
+
+The live dashboard backend switch, stop/continue controls, study scheduling and
+owner/history migration still require completion before production cutover.

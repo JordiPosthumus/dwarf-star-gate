@@ -30,13 +30,13 @@ const portProbe=net.createServer();await new Promise(r=>portProbe.listen(0,'127.
 const write=(file,value)=>fs.writeFileSync(path.join(home,file),typeof value==='string'?value:JSON.stringify(value,null,2),{mode:0o600});
 fs.mkdirSync(home+'/plugins',{mode:0o700});fs.cpSync(repo+'/integrations/hermes-stargate',home+'/plugins/stargate',{recursive:true});
 write('bridge.json',{url:origin+'/api/genie/native-tools',token});
-const cfg={display:{busy_input_mode:'queue'},model:{default:'fixture',provider:'custom',base_url:origin+'/v1',context_length:131072},platform_toolsets:{api_server:['stargate_native'],telegram:['stargate_native']},plugins:{enabled:['stargate','telegram'],entries:{stargate:{allow_gateway_injection:true,settings:{enable_ui_bridge:true,module_directory:repo+'/ds4-gateway',bridge_descriptor:home+'/bridge.json'}}}},platforms:{stargate_control:{enabled:true,token:key,gateway_restart_notification:false,extra:{allowed_session_keys:['agent:main:telegram:dm:12345']}},telegram:{enabled:true,token:fakeToken,extra:{preserve_pending_updates:true,base_url:origin+'/bot',base_file_url:origin+'/file/bot'}},api_server:{enabled:true,extra:{host:'127.0.0.1',port,key}}}};
+const cfg={display:{busy_input_mode:'queue'},model:{default:'fixture',provider:'custom',base_url:origin+'/v1',context_length:131072},platform_toolsets:{api_server:['stargate_native'],telegram:['stargate_native'],stargate_control:['stargate_native']},plugins:{enabled:['stargate','telegram'],entries:{stargate:{allow_gateway_injection:true,settings:{enable_ui_bridge:true,module_directory:repo+'/ds4-gateway',bridge_descriptor:home+'/bridge.json'}}}},platforms:{stargate_control:{enabled:true,token:key,gateway_restart_notification:false,extra:{allowed_session_keys:['agent:main:telegram:dm:12345'],dashboard_owner_id:'12345'}},telegram:{enabled:true,token:fakeToken,extra:{preserve_pending_updates:true,base_url:origin+'/bot',base_file_url:origin+'/file/bot'}},api_server:{enabled:true,extra:{host:'127.0.0.1',port,key}}}};
 write('native-gateway.json',{url:'http://127.0.0.1:'+port,api_key:key,control_token:key});
 const nativeChat=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:'fixture-conversation',session_key:'agent:main:telegram:dm:12345'}]});
 write('config.yaml',cfg);write('SOUL.md','You are a native gateway integration fixture.');write('AGENTS.md','Use only fixture tools. No real servers or external channels are configured.');
 const log=fs.openSync(home+'/gateway.log','w',0o600);
 try{
-const launch=()=>spawn(source+'/.venv/bin/python',['-B',repo+'/scripts/run-native-hermes.py','--config',home+'/config.yaml'],{cwd:home,env:{PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:source,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',OPENAI_BASE_URL:origin+'/v1',OPENAI_API_KEY:'fixture-local-key',API_SERVER_KEY:key,API_SERVER_PORT:String(port),API_SERVER_HOST:'127.0.0.1',TELEGRAM_BOT_TOKEN:fakeToken,TELEGRAM_ALLOWED_USERS:'12345',HERMES_TELEGRAM_DISABLE_FALLBACK_IPS:'1',LANG:'en_US.UTF-8'},stdio:['ignore',log,log]});
+const launch=()=>spawn(source+'/.venv/bin/python',['-B',repo+'/scripts/run-native-hermes.py','--config',home+'/config.yaml'],{cwd:home,env:{PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:source,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',OPENAI_BASE_URL:origin+'/v1',OPENAI_API_KEY:'fixture-local-key',API_SERVER_KEY:key,API_SERVER_PORT:String(port),API_SERVER_HOST:'127.0.0.1',TELEGRAM_BOT_TOKEN:fakeToken,TELEGRAM_ALLOWED_USERS:'12345',DSG_DASHBOARD_ALLOWED_USERS:'12345',HERMES_TELEGRAM_DISABLE_FALLBACK_IPS:'1',LANG:'en_US.UTF-8'},stdio:['ignore',log,log]});
 child=launch();
 let ready=false;for(let i=0;i<50;i++){if(child.exitCode!==null)throw Error('Native gateway exited; inspect '+home+'/gateway.log');try{const r=await fetch('http://127.0.0.1:'+port+'/v1/models',{headers:{authorization:'Bearer '+key},signal:AbortSignal.timeout(1000)});if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,500));}
 assert.ok(ready,'Native gateway API readiness');
@@ -68,16 +68,21 @@ const queuedRequest={...nativeRequest,request_id:'12345678-1234-4234-8234-123456
 assert.equal((await nativeChat.session('fixture-conversation')).busy,true,'Native scheduler reports the held turn as busy');
 assert.equal((await nativeChat.submit('fixture-conversation',queuedRequest.message,'watcher-follow-up-fixture')).state,'accepted_unverified');
 assert.equal((await nativeChat.submit('fixture-conversation',queuedRequest.message,'watcher-follow-up-fixture')).state,'accepted_unverified');
+await nativeChat.submit('fixture-conversation','A second distinct dashboard follow-up must run in order.','watcher-second-follow-up-fixture');
 await new Promise(r=>setTimeout(r,1000));
+assert.equal((await nativeChat.session('fixture-conversation')).queued,2,'Native FIFO depth includes both pending dashboard instructions');
 assert.equal(modelCalls,callsWhileHeld,'Dashboard input must not start a competing agent turn or interrupt the active turn');
 releaseModel();
-for(let i=0;i<150;i++){if(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length>=4)break;await new Promise(r=>setTimeout(r,200));}
-assert.equal(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,4,'Both the held Telegram turn and queued dashboard turn complete');
+for(let i=0;i<150;i++){if(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length>=5)break;await new Promise(r=>setTimeout(r,200));}
+assert.equal(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,5,'The held Telegram turn and both distinct queued dashboard turns complete');
 assert.equal(toolCalls,1,'Queued native turn preserves tool history');
 const beforeUnauthorized=modelCalls;
 updates.push({update_id:102,message:{message_id:103,date:Math.floor(Date.now()/1000),chat:{id:54321,type:'private',first_name:'Untrusted'},from:{id:54321,is_bot:false,first_name:'Untrusted'},text:'Run the fleet power tool.'}});
 await new Promise(r=>setTimeout(r,2000));
 assert.equal(modelCalls,beforeUnauthorized,'Unauthorized Telegram sender must not reach the agent');
+const created=await nativeChat.create({id:'22222222-2222-4222-8222-222222222222',title:'Dashboard research',purpose:'setup_research'});
+assert.equal(created.history_complete,true);assert.equal(created.messages.length,0);
+assert.equal((await nativeChat.create({id:created.id,title:'Dashboard research',purpose:'setup_research'})).native_session_id,created.native_session_id,'Creation retry keeps the same native session');
 child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);
 assert.notEqual(child.exitCode,null,'Fixture gateway must stop before restart');
 // Native Hermes deliberately disables SO_REUSEADDR on macOS to prevent two
@@ -95,24 +100,42 @@ updates.push({update_id:103,message:{message_id:104,date:Math.floor(Date.now()/1
 child=launch();
 for(let i=0;i<150;i++){
  if(child.exitCode!==null)throw Error('Restarted fixture exited');
- if(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length>=5)break;
+ if(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length>=6)break;
  await new Promise(r=>setTimeout(r,300));
 }
 const replyCount=telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length;
-assert.equal(replyCount,5,'Native history survives restart and pending owner message gets a reply');
+assert.equal(replyCount,6,'Native history survives restart and pending owner message gets a reply');
 assert.equal(toolCalls,1,'Second turn retains the original tool result rather than losing history and repeating the tool');
 assert.deepEqual((await control(nativeRequest)).body,submitted.body,'Restart preserves the UI dispatch receipt without replay');
 const nativeAfter=await nativeChat.read('fixture-conversation',{all:true,limit:2});
 assert.equal(nativeAfter.native_session_id,nativeBefore.native_session_id,'Restart retains the original native session');
-assert.equal(nativeAfter.messages.filter(m=>m.role==='assistant'&&m.state==='complete').length,5,'Dashboard sees every completed native reply after restart');
+assert.equal(nativeAfter.messages.filter(m=>m.role==='assistant'&&m.state==='complete').length,6,'Dashboard sees every completed native reply after restart');
 assert.equal(nativeAfter.history_complete,true,'Every native display page was joined under the same revision');
+const queuedFirst=nativeAfter.messages.findIndex(m=>m.role==='user'&&m.text===queuedRequest.message);
+const queuedSecond=nativeAfter.messages.findIndex(m=>m.role==='user'&&m.text==='A second distinct dashboard follow-up must run in order.');
+assert.ok(queuedFirst>=0&&queuedSecond>queuedFirst,'Separate native FIFO instructions retain arrival order');
 assert.equal((await control({action:'transcript',session_key:'agent:main:telegram:dm:54321',session_id:nativeAfter.native_session_id,offset:0,limit:2,revision:null})).body.state,'rejected','Display history is limited to the explicitly bound owner session');
 assert.equal((await nativeChat.receipt('fixture-conversation','watcher-follow-up-fixture')).state,'accepted_unverified','Dispatch state is not silently promoted to operational success');
 write('native-transcript.json',nativeAfter);
+await nativeChat.submit(created.id,'Inspect the fixture in this new dashboard conversation.','dashboard-create-fixture');
+let dashboardConversation;
+for(let i=0;i<100;i++){
+ dashboardConversation=await nativeChat.read(created.id,{all:true});
+ if(dashboardConversation.messages.some(m=>m.role==='assistant'&&m.state==='complete'))break;
+ await new Promise(r=>setTimeout(r,200));
+}
+assert.equal(dashboardConversation.messages.filter(m=>m.role==='assistant'&&m.state==='complete').length,1,'Native scheduler answers the new dashboard conversation');
+assert.equal(toolCalls,2,'New native session has its own original tool execution');
+assert.equal(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,6,'Dashboard-only replies do not leak into the owner Telegram conversation');
+const reconstructed=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[]});
+assert.equal((await reconstructed.discover())[0].id,created.id);
+assert.equal((await reconstructed.session(created.id)).session_id,created.native_session_id,'Native dashboard routing and its binding survive the gateway process restart');
+assert.equal((await reconstructed.read(created.id,{all:true})).messages.length,dashboardConversation.messages.length,'A new dashboard client discovers the retained native binding');
+write('native-dashboard-transcript.json',dashboardConversation);
 const dropped=telegramCalls.some(c=>c.method==='deleteWebhook'&&(c.body.drop_pending_updates===true||c.body.drop_pending_updates==='true'));
 const replied=telegramCalls.some(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool'));
 const typing=telegramCalls.some(c=>c.method==='sendChatAction'&&c.body.action==='typing');
-const result={at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===1&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+const result={at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}

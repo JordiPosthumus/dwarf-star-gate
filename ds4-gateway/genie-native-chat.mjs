@@ -93,6 +93,29 @@ export class NativeHermesChatClient{
     }catch{throw Error('Native gateway response could not be confirmed. Do not replay an uncertain instruction.');}
   }
   async control(payload){return this.request('/api/platforms/stargate_control/events',{body:payload,control:true});}
+  async create({id,title='New conversation',purpose=null}){
+    if(typeof id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id)||typeof title!=='string'||!title.trim()||title.length>100||![null,'setup_research'].includes(purpose))throw Error('Invalid native conversation metadata.');
+    const sessionKey=`agent:main:stargate_control:dm:${id}`;
+    if(this.bindings.has(id)&&this.binding(id).session_key!==sessionKey)throw Error('Native conversation identity conflicts with an existing binding.');
+    const result=await this.control({action:'create',id,title,purpose});
+    if(result.state!=='created'||result.id!==id||result.session_key!==sessionKey||result.title!==title||result.purpose!==purpose||typeof result.session_id!=='string')throw Error('Native conversation creation is unconfirmed. Retain its identity before retrying.');
+    this.bindings.set(id,{id,title,purpose,session_key:sessionKey,created_at:result.created_at});
+    return this.read(id,{all:true});
+  }
+  async discover(){
+    const result=await this.control({action:'conversations'});
+    if(result.state!=='observed'||!Array.isArray(result.conversations))throw Error('Native conversation catalogue is unavailable.');
+    if(new Set(result.conversations.map(row=>row?.id)).size!==result.conversations.length)throw Error('Native conversation catalogue contains duplicate identities.');
+    const discovered=[];
+    for(const row of result.conversations){
+      if(typeof row?.id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(row.id)||row.session_key!==`agent:main:stargate_control:dm:${row.id}`||typeof row.title!=='string'||!row.title.trim()||row.title.length>100||![null,'setup_research'].includes(row.purpose))throw Error('Native conversation catalogue is invalid.');
+      const previous=this.bindings.get(row.id);
+      if(previous&&previous.session_key!==row.session_key)throw Error('Native conversation identity conflicts with an existing binding.');
+      discovered.push({id:row.id,title:row.title,purpose:row.purpose,session_key:row.session_key,created_at:row.created_at});
+    }
+    for(const row of discovered)this.bindings.set(row.id,row);
+    return discovered;
+  }
   async session(id){const b=this.binding(id);const s=await this.control({action:'session',session_key:b.session_key});if(s.session_key!==b.session_key||s.state!=='observed'||typeof s.session_id!=='string'||typeof s.busy!=='boolean'||!Number.isInteger(s.queued))throw Error('Fresh native session evidence is unavailable.');return s;}
   async read(id,{offset=0,limit=500,all=false}={}){
     if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>500)throw Error('Invalid native transcript page.');
@@ -110,7 +133,7 @@ export class NativeHermesChatClient{
     // or reset must not silently stitch different conversations together.
     const after=await this.session(id);
     if(after.session_id!==session.session_id)throw Error('Native session changed during observation; read it again.');
-    return {...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),native_history_revision:revision};
+    return {...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),purpose:b.purpose??null,created_at:stamp(b.created_at),native_history_revision:revision};
   }
   async submit(id,text,requestId){
     const b=this.binding(id);
