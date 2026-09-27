@@ -28,6 +28,25 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     if(trial_id!==undefined&&!uuid.test(trial_id))throw Error('Use one exact trial UUID');
     return allStatus().filter(r=>trial_id===undefined||r.trial_id===trial_id).sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
   };
+  const index=()=>{
+    // Discovery must include enrolled plans even before their first execution,
+    // and old operations beyond the dashboard's recent-history window.
+    const entries=Object.entries(enrolled).map(([profile,binding])=>{
+      try{
+        if(!path.isAbsolute(binding.plan_file??'')||!/^[a-f0-9]{64}$/.test(binding.plan_sha256??''))throw Error('Invalid binding');
+        const bytes=fs.readFileSync(binding.plan_file);
+        if(hash(bytes)!==binding.plan_sha256)throw Error('Changed plan');
+        const plan=JSON.parse(bytes);
+        if(plan.schema!==1||typeof plan.worker!=='string'||typeof plan.kind!=='string')throw Error('Invalid plan');
+        return {kind:'recipe_profile',profile,worker:plan.worker,plan_kind:plan.kind,plan_sha256:binding.plan_sha256,
+          state:'verified_plan',...(typeof plan.qualification_mode==='string'?{qualification_mode:plan.qualification_mode}:{})};
+      }catch{return {kind:'recipe_profile',profile,state:'unavailable',scope:'Enrolled plan unreadable or changed. No execution is authorized by this observation.'};}
+    });
+    for(const receipt of allStatus())entries.push({kind:'recipe_trial',...Object.fromEntries(
+      ['trial_id','rollout_id','profile','worker','stage','state','phase','plan_sha256','started_at','finished_at'].filter(key=>receipt[key]!==undefined).map(key=>[key,receipt[key]])),
+      lookup:{trial_id:receipt.trial_id}});
+    return entries;
+  };
   const busy=worker=>allStatus().some(r=>r.stage!=='inspect'&&['starting','running','restoration_required'].includes(r.state)&&machinesFor(r.worker,config).some(g=>machinesFor(worker,config).includes(g)));
   async function start({profile,stage,trial_id,expected_finished_at}){
     if(!uuid.test(trial_id??'')||!['prepare','run','rollout','inspect'].includes(stage)||!Object.hasOwn(enrolled,profile))throw Error('Use an enrolled recipe profile, supported stage and one operation UUID.');
@@ -88,5 +107,5 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     }finally{fs.closeSync(output);}
     return {...receipt,next_step:'Read fleet_power_status recipe_trials for this trial ID. Do not repeat or claim completion while running.'};
   }
-  return {start,status,busy};
+  return {start,status,busy,index};
 }

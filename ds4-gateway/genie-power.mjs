@@ -8,7 +8,7 @@ import {createToolEndpoint} from './genie-tool-endpoint.mjs';
 import {powerWorkers,powerScript,machineGroup} from './power-scripts.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 
 export function fleetPowerEvidence({runner,workers=[],now=Date.now,catalogue=null}){
   const byId=new Map(workers.map(w=>[w.id,w]));
@@ -107,6 +107,32 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       scope:power_action==='stop'?'Stopping a Spark pair stops both machines of that pair, including any other model serving there.':'Starting may conflict with a different model already serving the same machine; the script refuses that case and reports it.'};
   }
   async function runTool(input){
+    if(input?.action==='status'&&input.view==='index'){
+      if(Object.keys(input).some(key=>!['action','view','worker','offset','limit','revision'].includes(key)))throw Error('Index and exact receipt selectors cannot be combined');
+      const {worker,offset=0,limit=12,revision}=input;
+      if(worker!==undefined&&(typeof worker!=='string'||!/^[A-Za-z0-9][\w-]{0,63}$/.test(worker)))throw Error('Use one worker ID');
+      if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>20)throw Error('Use a valid index page of up to 20 entries');
+      if(revision!==undefined&&(typeof revision!=='string'||!/^[a-f0-9]{64}$/.test(revision)))throw Error('Use the returned index revision');
+      const rows=new Map();
+      for(const value of saved.values())rows.set(value.action_id,{kind:value.kind,action_id:value.action_id,worker:value.worker,state:value.state,receipt:value.receipt});
+      for(const receipt of runner.receipts())rows.set(receipt.action_id,{kind:'power',action_id:receipt.action_id,worker:receipt.worker,state:receipt.state,receipt});
+      for(const receipt of routingReceipts.values())rows.set(receipt.action_id,{kind:'routing',action_id:receipt.action_id,worker:receipt.worker,state:receipt.state,receipt});
+      const actions=[...rows.values()].map(({receipt,...row})=>({...row,
+        ...(receipt?Object.fromEntries(['action','ok','exit_code','at','finished_at'].filter(key=>receipt[key]!==undefined).map(key=>[key,receipt[key]])):{}),
+        ...(receipt?.verified?{verification:receipt.verified.state}:{}),lookup:{action_id:row.action_id}}));
+      const entries=[...(recipes?.index?.()??[]),...actions]
+        // Unreadable plans have unknown membership: show them explicitly rather
+        // than implying that a worker has no enrollment.
+        .filter(row=>worker===undefined||row.worker===worker||row.kind==='recipe_profile'&&row.state==='unavailable')
+        .sort((a,b)=>JSON.stringify([a.kind,a.profile,a.trial_id,a.stage,a.action_id]).localeCompare(JSON.stringify([b.kind,b.profile,b.trial_id,b.stage,b.action_id])));
+      const digest=createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+      if(revision!==undefined&&revision!==digest)throw Error('Fleet index changed during observation; restart at offset 0');
+      const workers=await snapshotWorkers();
+      return {schema:1,observed_at:new Date().toISOString(),revision:digest,
+        members:fleetPowerEvidence({runner,workers}).members.filter(row=>worker===undefined||row.worker_id===worker),
+        entries:entries.slice(offset,offset+limit),pagination:{offset,limit,total:entries.length,returned:Math.min(limit,Math.max(0,entries.length-offset)),next_offset:offset+limit<entries.length?offset+limit:null},
+        scope:'Read-only index of enrolled recipes and retained operations. Follow next_offset with this revision for remaining entries; use each lookup for the full original receipt. Verified plan means matching enrolled bytes, not permission, readiness, current configuration or successful qualification. Unavailable plans have unknown worker membership. Dated operation states do not prove current serving health.'};
+    }
     if(input?.action==='inspect'){
       if(Object.keys(input).sort().join(',')!=='action,worker')throw Error('Read-only service inspection accepts one enrolled worker only');
       return runTool({action:'power',worker:input.worker,power_action:'status',action_id:randomUUID()});
