@@ -11,6 +11,26 @@ for(const name of ['status-glm53-m3','start-glm53-m3','stop-glm53-m3','status-sp
 }
 process.once('exit',()=>fs.rmSync(directory,{recursive:true,force:true}));
 
+test('chat index pages all recipe identities without oversized history, and retains exact receipt reads',async()=>{
+ let changed=false;
+ const trials=Array.from({length:37},(_,i)=>({kind:'recipe_trial',trial_id:String(i).padStart(8,'0')+'-2284-4b34-a479-aab1e8d51513',worker:'glm53f-sparks34',profile:'enrolled-profile',stage:'rollout',state:'complete'}));
+ const full={...trials[0],result:{output:'ORIGINAL_ARTIFACT_'.repeat(10000)}};
+ const runner={busy:()=>false,receipts:()=>[]};
+ const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]}),catalogue:async()=>{throw Error('Unrelated oversized catalogue must not be read');},recipes:{
+  index:()=>[{kind:'recipe_profile',profile:'enrolled-profile',worker:'glm53f-sparks34',state:changed?'unavailable':'verified_plan'},...trials,{kind:'recipe_profile',profile:'other',worker:'glm53f-m3'}],
+  status:id=>id===trials[0].trial_id?[full]:[],
+ }});
+ const first=await tools.tool({action:'status',view:'index',worker:'glm53f-sparks34'});
+ assert.equal(first.pagination.total,38);assert.equal(first.entries.length,12);assert.equal(first.pagination.next_offset,12);
+ assert.ok(JSON.stringify(first).length<12000);assert.doesNotMatch(JSON.stringify(first),/ORIGINAL_ARTIFACT|"other"/);
+ const rows=[...first.entries];let offset=first.pagination.next_offset;
+ while(offset!==null){const page=await tools.tool({action:'status',view:'index',worker:'glm53f-sparks34',offset,revision:first.revision});rows.push(...page.entries);offset=page.pagination.next_offset;}
+ assert.equal(rows.length,38);assert.equal(new Set(rows.filter(r=>r.trial_id).map(r=>r.trial_id)).size,37);
+ assert.deepEqual((await tools.tool({action:'status',trial_id:trials[0].trial_id})).recipe_trials,[full]);
+ changed=true;await assert.rejects(tools.tool({action:'status',view:'index',worker:'glm53f-sparks34',offset:12,revision:first.revision}),/index changed/);
+ for(const extra of [{action_id:UUID()},{limit:21},{offset:-1},{revision:'bad'}])await assert.rejects(tools.tool({action:'status',view:'index',...extra}));
+});
+
 test('power script allowlist refuses unknown workers, actions and non-executable paths',()=>{
   assert.equal(powerScript('glm53f-m3','status',directory),path.join(directory,'status-glm53-m3'));
   assert.equal(powerScript('nope','start'),null);
@@ -243,6 +263,18 @@ test('exact power action lookup follows the same execution beyond the recent-his
  await assert.rejects(tools.tool({action:'status',action_id:id,trial_id:id}));
 });
 
+test('service inspection needs no invented ID and cannot request a mutation',async()=>{
+ const calls=[];
+ const runner=createPowerRunner({directory,spawn:async(command,args)=>{calls.push({command,args});return {exit_code:0,output:'Observed service state'};}});
+ const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]}),isEnabled:()=>false});
+ const result=await tools.tool({action:'inspect',worker:'glm53f-m3'});
+ assert.match(result.action_id,/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+ assert.equal(result.receipt.action,'status');assert.equal(calls.length,1);
+ await assert.rejects(tools.tool({action:'inspect',worker:'glm53f-m3',power_action:'start'}));
+ await assert.rejects(tools.tool({action:'inspect',worker:'unregistered'}));
+ assert.equal(calls.length,1);
+});
+
 test('power receipts survive process reconstruction and uncertain actions cannot be replayed',async t=>{
  const receiptDirectory=fs.mkdtempSync(path.join(os.tmpdir(),'power-receipts-'));t.after(()=>fs.rmSync(receiptDirectory,{recursive:true,force:true}));
  let release,calls=0;
@@ -253,6 +285,8 @@ test('power receipts survive process reconstruction and uncertain actions cannot
  const nextRunner=createPowerRunner({directory,spawn:async()=>{throw Error('Must not replay');}});
  const resumed=createFleetPowerTools({runner:nextRunner,read,receiptDirectory});
  assert.equal((await resumed.tool({action:'status',action_id:input.action_id})).state,'unknown');
+ const interrupted=await resumed.tool({action:'status'});
+ assert.equal(interrupted.recent.length,0);assert.equal(interrupted.unresolved_actions[0].action_id,input.action_id);
  assert.equal((await resumed.tool(input)).state,'unknown');
  await assert.rejects(resumed.tool({...input,action_id:UUID()}),/no terminal receipt/);
  assert.equal(calls,1);release();await new Promise(resolve=>setImmediate(resolve));
@@ -260,6 +294,10 @@ test('power receipts survive process reconstruction and uncertain actions cannot
  const result=await finished.tool({action:'status',action_id:input.action_id});
  assert.equal(result.state,'complete');assert.equal(result.receipt.ok,false);assert.equal(result.receipt.exit_code,1);assert.equal(result.receipt.output,'Observed failure');assert.equal(result.receipt.verified.state,'timeout');
  assert.equal((await finished.tool(input)).receipt.exit_code,1);assert.equal(calls,1);
+ const overview=await finished.tool({action:'status'});
+ assert.equal(overview.recent[0].action_id,input.action_id);assert.equal(overview.recent[0].ok,false);
+ assert.equal(overview.recent[0].verified.state,'timeout');assert.equal(calls,1);
+ assert.match(overview.scope,/historical evidence, not current service health/);
  assert.equal(fs.statSync(path.join(receiptDirectory,input.action_id+'.json')).mode&0o777,0o600);
  await assert.rejects(finished.tool({...input,power_action:'stop'}),/another action/);
 });

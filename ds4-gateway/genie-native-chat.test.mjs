@@ -1,0 +1,260 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import {createHash} from 'node:crypto';
+import {studyEvidence} from './genie-study.mjs';
+import {NativeHermesChatClient,nativeRequestId,projectNativePending,projectNativeConversation,readNativeGatewayDescriptor} from './genie-native-chat.mjs';
+
+const observed={state:'observed',session_key:'agent:main:telegram:dm:fixture',session_id:'native-session',busy:false,queued:0,pending_inputs:[],observed_at:'2026-09-27T05:00:00Z'};
+const rows=[
+  {id:1,role:'user',content:'Inspect the service.',timestamp:100},
+  {id:2,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'tool_call',arguments:JSON.stringify({name:'inspect_fleet_service',arguments:{worker:'fixture'}})}}],finish_reason:'tool_calls',timestamp:101,reasoning_content:'private reasoning'},
+  {id:3,role:'tool',content:JSON.stringify({state:'running',action_id:'fixture-action'}),tool_call_id:'call-1',tool_name:'inspect_fleet_service',timestamp:102},
+  {id:4,role:'assistant',content:'Inspection has started.',finish_reason:'stop',timestamp:103},
+];
+
+test('native recovery projection retains pre-dispatch IDs without manufacturing completed recovery',()=>{
+  const name='prepare_pair_recovery',args={worker_id:'fixture'},action='11111111-1111-4111-8111-111111111111';
+  const row={id:2,role:'assistant',content:'',timestamp:101,tool_calls:[{id:'call-1',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}],
+    dsg_operations:[{schema:1,receipt_id:'a'.repeat(64),scope:{session_key:observed.session_key},native_call:{row_id:2,tool_call_id:'call-1',tool:name},tool:name,arguments:args,
+      events:[{kind:'recovery',tool:name,state:'reading',action_id:action,request:args,at:'2026-09-27T00:00:00Z'}]}]};
+  const project=r=>projectNativeConversation({id:'conversation',session:observed,messages:[rows[0],r]});
+  const view=project(row);assert.equal(view.messages[1].recovery.events[0].action_id,action);assert.equal(view.messages[1].state,'working');
+  assert.throws(()=>project({...row,dsg_operations:[{...row.dsg_operations[0],arguments:{worker_id:'other'}}]}),/does not match/);
+  row.dsg_operations[0].events.push({...row.dsg_operations[0].events[0],state:'complete',result:{action_id:action,state:'running'}});
+  const completed=projectNativeConversation({id:'conversation',session:observed,messages:[rows[0],row,{id:3,role:'tool',tool_call_id:'call-1',content:JSON.stringify({action_id:action,state:'running'}),timestamp:102},rows[3]]});
+  assert.equal(completed.messages[1].recovery.events.length,2);assert.equal(completed.messages[1].recovery.events[1].result.state,'running');
+  const reused=projectNativeConversation({id:'conversation',session:observed,messages:[rows[0],row,
+    {id:4,role:'assistant',content:'',timestamp:103,tool_calls:[{id:'call-1',function:{name:'stargate_operation_status',arguments:'{}'}}]},
+    {id:5,role:'tool',tool_call_id:'call-1',content:'{"receipts":[]}',timestamp:104}]});
+  assert.equal(reused.messages[1].recovery.events.at(-1).tool,'stargate_operation_status','Earlier receipt cannot hide another persisted call with a reused model ID');
+});
+
+test('native transcript projects receipts without turning running operations into completed outcomes',()=>{
+  const result=projectNativeConversation({id:'conversation',session:observed,messages:rows,pagination:{offset:0,limit:500,returned:4,total:4}});
+  assert.equal(result.messages.length,2);
+  assert.equal(result.messages[1].state,'complete');
+  const event=result.messages[1].power.events[0];
+  assert.deepEqual(event.request,{worker:'fixture'});
+  assert.equal(event.result.state,'running');
+  assert.equal(event.tool_call_id,'call-1');
+  assert.doesNotMatch(JSON.stringify(result),/private reasoning/);
+  assert.equal(result.history_complete,true);
+  const pending=projectNativeConversation({id:'conversation',session:{...observed,busy:true},messages:rows.slice(0,3),pagination:{offset:0,limit:3,returned:3,total:4}});
+  assert.equal(pending.messages[1].state,'working');assert.equal(pending.history_complete,false);assert.equal(pending.busy,true);
+});
+
+test('tool failures and truncated native answers retain uncertainty',()=>{
+  const messages=structuredClone(rows);messages[2].content='{"error":"Inspection unavailable"}';messages[3].finish_reason='length';
+  const result=projectNativeConversation({id:'conversation',session:observed,messages,pagination:{offset:1,limit:500,returned:4,total:4}});
+  assert.equal(result.messages[1].power.events[0].state,'failed');
+  assert.equal(result.messages[1].state,'failed');assert.equal(result.history_complete,false);
+});
+
+test('request identity is stable across retries and distinct across conversations',()=>{
+  assert.equal(nativeRequestId('one','watcher-12345'),nativeRequestId('one','watcher-12345'));
+  assert.notEqual(nativeRequestId('one','watcher-12345'),nativeRequestId('two','watcher-12345'));
+  assert.match(nativeRequestId('one','watcher-12345'),/^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.throws(()=>nativeRequestId('one','bad/id'));
+});
+
+test('native history recovers the original study request identity and rejects mismatched correlation',()=>{
+  const id='conversation',source='study-follow-up-12345',native=nativeRequestId(id,source);
+  const row={id:10,role:'user',content:`[DSG request ${native}]\n\nInspect the service.`,timestamp:100,
+    dsg_request:{schema:1,request_id:native,source_request_id:source}};
+  const project=message=>projectNativeConversation({id,session:observed,messages:[message],pagination:{offset:0,returned:1,total:1}}).messages[0];
+  assert.equal(project(row).request_id,source);assert.equal(project(row).native_request_id,native);
+  assert.equal(project(row).text,'Inspect the service.');
+  for(const change of [{source_request_id:'another-request'},{request_id:nativeRequestId('other',source)},{schema:2}])
+    assert.throws(()=>project({...row,dsg_request:{...row.dsg_request,...change}}),/correlation/);
+  const {dsg_request,...legacy}=row;assert.equal(project(legacy).request_id,native,'Existing uncorrelated receipts retain their native identity');
+});
+
+test('study display retains the original question and full prior evidence under its exact native input hash',()=>{
+  const id='conversation',request='study-request-12345',native=nativeRequestId(id,request),text=`[DSG request ${native}]\n\nOriginal question\n\nResearch brief and full prior evidence`;
+  const context={study_brief:'Read the source',previous_study:{latest_completed_answer:{text:'Prior answer '.repeat(30000)}}};
+  const user={id:1,role:'user',timestamp:100,content:text,dsg_request:{schema:1,request_id:native,source_request_id:request,
+    visible_message:'Original question',study_context:context,input_sha256:createHash('sha256').update(text).digest('hex')}};
+  const project=u=>projectNativeConversation({id,session:observed,messages:[u,{id:2,role:'assistant',content:'Answer',timestamp:101,finish_reason:'stop'}]});
+  const view=project(user);assert.equal(view.messages[0].text,'Original question');assert.deepEqual(view.messages[1].context,context);
+  assert.throws(()=>project({...user,content:text+' altered'}),/retained display evidence/);
+});
+
+async function fixture(t){
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-native-client-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const f={calls:[],api_key:'fixture-api-key-000000',control_token:'fixture-control-key-000000',changed:false,unavailable:false,reads:0};
+  const server=http.createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;const body=raw?JSON.parse(raw):null;
+    f.calls.push({route:req.url,body});res.setHeader('content-type','application/json');
+    const control=req.url.includes('/platforms/');
+    if(req.headers.authorization!=='Bearer '+f[control?'control_token':'api_key']){res.statusCode=401;return res.end('{}');}
+    if(f.unavailable){res.statusCode=503;return res.end('{"secret":"must-not-leak"}');}
+    if(body?.action==='observe')return res.end(JSON.stringify({state:'observed',sessions:body.session_keys.map(session_key=>({...observed,session_key,...f.observation,history:{session_id:'native-session',revision:'a'.repeat(64),total:rows.length,...f.history}}))}));
+    if(body?.action==='session'){f.reads++;return res.end(JSON.stringify({...observed,session_id:f.changed&&f.reads>1?'changed-session':'native-session'}));}
+    if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id,source_request_id:f.wrongCorrelation?'wrong-request':body.source_request_id,...('research' in body?{research:body.research}:{})}));
+    if(body?.action==='status')return res.end(JSON.stringify({state:'unknown',request_id:body.request_id}));
+    assert.equal(body?.action,'transcript');
+    const data=rows.slice(body.offset,body.offset+body.limit);
+    const page={state:'observed',pending_inputs:f.observation?.pending_inputs??[],session_key:observed.session_key,session_id:'native-session',revision:f.history?.revision??(f.historyChanged&&body.offset>0?'b':'a').repeat(64),data,pagination:{offset:body.offset,limit:body.limit,returned:data.length,total:rows.length,order:'oldest'}};
+    if(f.badPage)page.pagination.returned=0;
+    res.end(JSON.stringify(page));
+  });
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise(r=>server.close(r));});
+  const descriptor=path.join(directory,'native.json');
+  f.save=()=>fs.writeFileSync(descriptor,JSON.stringify({url:'http://127.0.0.1:'+server.address().port,api_key:f.api_key,control_token:f.control_token}),{mode:0o600});f.save();
+  f.client=new NativeHermesChatClient({descriptor,bindings:[{id:'conversation',session_key:observed.session_key}]});f.descriptor=descriptor;return f;
+}
+
+test('native client reads actual HTTP messages and uses only the session injector for input',async t=>{
+  const f=await fixture(t);const view=await f.client.read('conversation');assert.equal(view.messages[1].power.events[0].result.state,'running');
+  const accepted=await f.client.submit('conversation','Inspect the service.','watcher-12345');assert.equal(accepted.state,'accepted_unverified');
+  const sent=f.calls.find(c=>c.body?.action==='send');assert.equal(sent.body.session_key,observed.session_key);
+  assert.ok(f.calls.every(c=>!c.route.endsWith('/chat')));
+  f.api_key='rotated-fixture-api-key';f.control_token='rotated-fixture-control-key';f.save();
+  assert.equal((await f.client.read('conversation')).native_session_id,'native-session');
+  await assert.rejects(f.client.submit('other','Inspect','request-12345'),/not connected/);
+});
+
+test('fresh canonical revisions reuse complete history while updating execution and invalidating changed content',async t=>{
+  const f=await fixture(t),refresh=async()=>f.client.read('conversation',{all:true,observation:(await f.client.observe(['conversation'])).get('conversation')});
+  const first=await refresh();first.messages[0].text='external mutation';
+  const before=f.calls.length;
+  f.observation={busy:true,queued:3,turn_id:'new-turn',hold:{state:'held',hold_id:'hold',turn_id:'old',queued:3},observed_at:'2026-09-27T05:00:02Z'};
+  const second=await refresh();
+  assert.deepEqual(f.calls.slice(before).map(c=>c.body.action),['observe'],'Unchanged full history never downloads again');
+  assert.equal(second.messages[0].text,'Inspect the service.');assert.equal(second.busy,true);assert.equal(second.queued,3);assert.equal(second.native_turn_id,'new-turn');assert.equal(second.native_hold.hold_id,'hold');assert.equal(second.observed_at,f.observation.observed_at);
+  f.history={revision:'b'.repeat(64)};
+  const changed=f.calls.length;await refresh();
+  assert.deepEqual(f.calls.slice(changed).map(c=>c.body.action),['observe','transcript','session'],'Same message count with different full revision forces a download');
+  f.observation={state:'unavailable'};await assert.rejects(refresh(),/unavailable/);
+  f.observation={queued:-1};await assert.rejects(refresh(),/invalid/);
+  f.observation={};f.history={revision:'invalid'};await assert.rejects(refresh(),/invalid/);
+});
+
+test('bulk observations reject duplicate or substituted bindings and partial history is never cached',async t=>{
+  const f=await fixture(t);await f.client.read('conversation',{limit:2});
+  assert.equal(f.client.historyCache.size,0);
+  await assert.rejects(f.client.observe(['conversation','conversation']),/distinct/);
+  f.client.control=async()=>({state:'observed',sessions:[{...observed,session_key:'unbound'}]});
+  await assert.rejects(f.client.observe(['conversation']),/inconsistent/);
+});
+
+test('routing changes and unavailable observations never become empty history or automatic replay',async t=>{
+  const f=await fixture(t);f.changed=true;await assert.rejects(f.client.read('conversation'),/changed during observation/);
+  f.unavailable=true;const before=f.calls.length;
+  await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),error=>/could not be confirmed/.test(error.message)&&!error.message.includes('must-not-leak'));
+  assert.equal(f.calls.length,before+1,'Uncertain send is not retried by the client');
+  await assert.rejects(f.client.read('conversation'),/could not be confirmed/);
+});
+test('native rejected and uncertain dispatch states cannot be counted as accepted follow-ups',async t=>{
+  const f=await fixture(t);
+  for(const state of ['rejected','not_accepted','unknown','dispatching']){
+    f.dispatchState=state;
+    await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),/acceptance is unconfirmed/);
+  }
+  assert.equal(f.calls.length,4);
+  assert.equal(new Set(f.calls.map(c=>c.body.request_id)).size,1);
+});
+
+test('a dispatch acknowledgment for another original request does not authorize a retry',async t=>{
+  const f=await fixture(t);f.wrongCorrelation=true;
+  await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),/acceptance is unconfirmed/);
+  assert.equal(f.calls.length,1);
+});
+
+test('research choices stay explicit in native dispatch and invalid options never send',async t=>{
+  const f=await fixture(t);
+  for(const value of ['false',null,0])await assert.rejects(f.client.submit('conversation','Inspect','request-12345',{research:value}),/must be boolean/);
+  assert.equal(f.calls.length,0);
+  const receipt=await f.client.submit('conversation','Inspect','request-12345',{research:false});
+  assert.equal(receipt.research,false);assert.equal(f.calls[0].body.research,false);
+});
+
+test('native descriptor rejects shared files and nonlocal credential destinations',async t=>{
+  const f=await fixture(t);fs.chmodSync(f.descriptor,0o644);assert.throws(()=>readNativeGatewayDescriptor(f.descriptor),/private/);
+  fs.chmodSync(f.descriptor,0o600);fs.writeFileSync(f.descriptor,JSON.stringify({url:'https://example.invalid/',api_key:f.api_key,control_token:f.control_token}));
+  assert.throws(()=>readNativeGatewayDescriptor(f.descriptor),/local/);
+});
+
+test('paged native display joins tool calls across pages and rejects shifting or malformed history',async t=>{
+  const f=await fixture(t);
+  const page=await f.client.read('conversation',{limit:2});assert.equal(page.history_complete,false);
+  const full=await f.client.read('conversation',{limit:2,all:true});
+  assert.equal(full.history_complete,true);assert.equal(full.messages.length,2);
+  assert.deepEqual(full.messages[1].power.events[0].request,{worker:'fixture'});
+  const continued=f.calls.filter(c=>c.body?.action==='transcript'&&c.body.offset===2);
+  assert.equal(continued[0].body.revision,'a'.repeat(64));
+  f.historyChanged=true;await assert.rejects(f.client.read('conversation',{limit:2,all:true}),/changed during observation/);
+  f.historyChanged=false;f.badPage=true;await assert.rejects(f.client.read('conversation',{all:true}),/evidence is unavailable/);
+});
+
+test('native inspection and research receipts remain usable by existing study evidence',()=>{
+  const messages=[{id:1,role:'user',content:'Study this setup.',timestamp:100}];
+  const tool=(name,args,value)=>{
+    const id='call-'+messages.length;
+    messages.push({id:messages.length+1,role:'assistant',content:'',timestamp:101,tool_calls:[{id,function:{name,arguments:JSON.stringify(args)}}]},
+      {id:messages.length+2,role:'tool',tool_call_id:id,content:JSON.stringify(value),timestamp:102});
+  };
+  tool('read_server_configuration',{worker_id:'fixture'},{worker_id:'fixture',read_at:'record-time'});
+  tool('inspect_server',{worker_id:'fixture',selected_default:false},{observed_at:'live-time',sources:{status:'read',files:[{path:'runtime.py',status:'read',sha256:'fixture-sha'}]}});
+  tool('stargate_web_extract',{url:'https://example.invalid/docs'},{url:'https://example.invalid/docs',content:'public source',content_sha256:'source-sha',truncated:false});
+  const view=projectNativeConversation({id:'conversation',session:observed,messages,pagination:{offset:0,limit:500,returned:messages.length,total:messages.length}});
+  const evidence=studyEvidence(view.messages.filter(m=>m.role==='assistant'));
+  assert.equal(evidence.workers[0].record_read_at,'record-time');assert.equal(evidence.workers[0].live_read_at,'live-time');
+  assert.equal(evidence.workers[0].source_files[0].sha256,'fixture-sha');assert.deepEqual(evidence.pages_read,['https://example.invalid/docs']);
+});
+
+test('native creation and discovery cannot replace an existing Telegram binding',async t=>{
+  const f=await fixture(t),id='22222222-2222-4222-8222-222222222222';
+  f.client.bindings.set(id,{id,session_key:observed.session_key});
+  const before=f.calls.length;
+  await assert.rejects(f.client.create({id}),/conflicts/);
+  assert.equal(f.calls.length,before,'Identity conflict is rejected before native creation');
+  const row={id,title:'New conversation',purpose:null,session_key:`agent:main:stargate_control:dm:${id}`};
+  f.client.control=async()=>({state:'observed',conversations:[row]});
+  await assert.rejects(f.client.discover(),/conflicts/);
+  assert.equal(f.client.binding(id).session_key,observed.session_key);
+  f.client.bindings.delete(id);
+  assert.deepEqual((await f.client.discover()).map(b=>b.id),[id]);
+  f.client.control=async()=>({state:'observed',conversations:[row,row]});
+  await assert.rejects(f.client.discover(),/duplicate/);
+  f.client.control=async()=>({state:'unknown'});
+  await assert.rejects(f.client.create({id}),/creation is unconfirmed/);
+});
+
+test('migrated history preserves failed/interrupted messages and original domain receipts without inventing native tool calls',()=>{
+ const id='11111111-1111-4111-8111-111111111111';
+ const originals=[{id:'old-user',role:'user',state:'complete',text:'Original question',at:100000},
+  {id:'old-reply',role:'assistant',state:'failed',text:'Unverified recovery',at:101000,error:'Old observation failure',power:{events:[{tool:'fleet_power',state:'complete',result:{ok:false,action_id:'retained-action'}}]}},
+  {id:'old-interrupted',role:'assistant',state:'interrupted',text:'Saved partial reply',at:102000}];
+ const imported=originals.map((message,index)=>({id:index+1,role:message.role,content:message.text,timestamp:message.at/1000,display_kind:'dsg_legacy',dsg_legacy:{schema:1,conversation_id:id,source_sha256:'a'.repeat(64),message}}));
+ const actual=projectNativeConversation({id,session:observed,messages:[...imported,{id:10,role:'user',content:'New native question',timestamp:103},{id:11,role:'assistant',content:'New native reply',timestamp:104,finish_reason:'stop'}]});
+ assert.deepEqual(actual.messages.slice(0,3).map(({native_row_id,legacy_source_sha256,...m})=>m),originals);
+ assert.equal(actual.messages.length,5);assert.equal(actual.messages.at(-1).state,'complete');
+ assert.equal(actual.messages[1].native_tools,undefined,'Historical receipt remains historical, not an invented Hermes invocation');
+ assert.throws(()=>projectNativeConversation({id:'another-conversation',session:observed,messages:imported}),/inconsistent/);
+ assert.throws(()=>projectNativeConversation({id,session:observed,messages:[{...imported[1],content:'Changed text'}]}),/inconsistent/);
+});
+
+
+test('native connection diagnosis stays an observation with its unresolved cause',()=>{
+ const view=projectNativeConversation({id:'conversation',session:observed,messages:[
+  {id:1,role:'assistant',timestamp:100,content:'',tool_calls:[{id:'diagnosis',function:{name:'inspect_spark_connection',arguments:'{"connection":"FixtureSpark"}'}}]},
+  {id:2,role:'tool',timestamp:101,tool_call_id:'diagnosis',content:JSON.stringify({state:'observed',connection_state:'authentication_unavailable',cause:'undetermined',physical_access_required:null})}]});
+ assert.equal(view.messages[0].spark_setup.events[0].result.cause,'undetermined');
+ assert.equal(view.messages[0].spark_setup.events[0].result.physical_access_required,null);
+});
+
+
+test('pending acceptance is distinct from queue proof and disappears only under matching native history',()=>{
+ const id='conversation',request='pending-source-12345',native=nativeRequestId(id,request);
+ const row={id:native,native_request_id:native,request_id:request,text:'Saved question',created_at:'2026-09-27T10:00:00Z',media_count:0,state:'accepted_unverified'};
+ assert.equal(projectNativePending(id,[row])[0].state,'accepted_unverified');
+ assert.deepEqual(projectNativePending(id,[row],[{role:'user',native_request_id:native}]),[]);
+ assert.throws(()=>projectNativePending('different',[row]),/correlation/);
+ assert.throws(()=>projectNativePending(id,undefined),/unavailable/);
+ assert.throws(()=>projectNativePending(id,[{...row,state:'complete'}]),/invalid/);
+});

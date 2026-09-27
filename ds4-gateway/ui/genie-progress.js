@@ -2,6 +2,12 @@
 const age=(at,now)=>Math.max(0,Math.floor((now-at)/1000));
 const duration=n=>n<60?`${n}s`:`${Math.floor(n/60)}m ${n%60}s`;
 export function chatProgress(message,{now=Date.now(),connected=true,suspended=false,paused=false}={}){
+  if(message.native_execution){
+    const at=Date.parse(message.native_observation?.observed_at),fresh=connected&&Number.isFinite(at)&&now-at>=-5000&&now-at<=15000;
+    return {label:fresh?'Hermes has an active turn':'Native execution status unavailable',
+      detail:'This is the current native execution, separate from saved response text.',
+      activity:fresh?'The turn may be waiting for a model or tool. This observation does not prove generation is advancing.':'Refresh to obtain current execution evidence. No instruction has been replayed.'};
+  }
   if(!['working','queued'].includes(message.state))return null;
   const elapsed=duration(age(message.at,now));
   if(!connected)return {label:'Connection lost · progress unknown',detail:`${elapsed} since submission. Reconnecting to the dashboard; the saved request has not been replayed.`};

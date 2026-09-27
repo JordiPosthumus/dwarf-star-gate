@@ -11,8 +11,9 @@ TOOLSET='stargate_admission'
 NAMES={'admission_status','admission_inspect','admission_admit','verify_serving'}
 
 
-def register_admission(config,emit):
-    from tools.registry import registry
+def register_admission(config,emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url=urllib.parse.urlsplit(config['url'])
     if (url.scheme!='http' or url.hostname!='127.0.0.1' or not url.port or url.path!='/api/genie/admission-tools'
             or url.username or url.password or url.query or url.fragment):

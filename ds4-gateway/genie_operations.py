@@ -10,8 +10,9 @@ TOOLSET = 'stargate_operations'
 NAMES = {'propose_server_change','server_change_status'}
 
 
-def register_operations(config, emit):
-    from tools.registry import registry
+def register_operations(config, emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url = urllib.parse.urlsplit(config['url'])
     if (url.scheme != 'http' or url.hostname != '127.0.0.1' or not url.port
             or url.path != '/api/genie/operation-tools' or url.username or url.password or url.query or url.fragment):

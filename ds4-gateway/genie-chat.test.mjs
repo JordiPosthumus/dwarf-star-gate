@@ -7,6 +7,28 @@ import {GenieChat,chatContext} from './genie-chat.mjs';
 import {createChatDemo} from '../examples/genie-chat-demo.mjs';
 
 function directory(t){const d=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-chat-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));return d;}
+test('dashboard waits for native chat refresh and asynchronous dispatch without changing CSRF protection',async t=>{
+  const {server,chat}=createChatDemo({directory:directory(t)});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise(r=>server.close(r));});
+  const origin=`http://127.0.0.1:${server.address().port}`,url=origin+'/api/genie/chat';
+  let refreshed=0,accept,submitted=0;
+  chat.refresh=async()=>{await Promise.resolve();refreshed++;};
+  chat.get=async()=>({id:'native',messages:[{role:'assistant',state:'complete',text:'Native reply'}]});
+  chat.create=async()=>({id:'native',messages:[]});
+  chat.submit=async()=>{submitted++;await new Promise(r=>accept=r);return {id:'native',messages:[],dispatch_state:'accepted_unverified'};};
+  const state=await(await fetch(url)).json();assert.equal(refreshed,1);
+  const loaded=await(await fetch(url+'/native')).json();assert.equal(refreshed,2);assert.equal(loaded.messages[0].text,'Native reply');
+  const post=(value,authorized=true)=>fetch(url,{method:'POST',headers:{'content-type':'application/json',...(authorized?{origin,'x-dsg-csrf':state.csrf_token}:{})},body:JSON.stringify(value)});
+  assert.equal((await post({action:'send'},false)).status,403);assert.equal(submitted,0);
+  assert.equal((await(await post({action:'new'})).json()).id,'native');
+  let returned=false;const sending=post({action:'send',conversation_id:'native',text:'Inspect',request_id:'native-async-request'}).then(r=>{returned=true;return r;});
+  while(!accept)await new Promise(r=>setImmediate(r));assert.equal(returned,false);
+  accept();const response=await sending;assert.equal(response.status,202);assert.equal((await response.json()).dispatch_state,'accepted_unverified');
+  chat.submit=async()=>{throw Error('Native acceptance unconfirmed');};
+  const rejected=await post({action:'send'});assert.equal(rejected.status,400);assert.match((await rejected.json()).error,/unconfirmed/);
+  chat.refresh=async()=>{throw Object.assign(Error('offline'),{code:'NATIVE_UNAVAILABLE'});};
+  assert.equal((await fetch(url)).status,503);assert.equal((await fetch(url+'/native')).status,503);
+});
 test('saved chat context explains intentional maintenance without exporting private lock details or claiming tools are absent',async t=>{
   let supplied;const lock={id:'owned-test',name:'Music qualification',created_at:1000,review_at:null,control_channel:'approved_operation',reason:'PRIVATE_REASON'};
   const chat=new GenieChat({directory:directory(t),provider:{generate:async p=>{supplied=p.context;return {text:'The worker is reserved for its music test.'};}},getSnapshot:()=>({gateway:{workers:[{id:'one',is_healthy:false,drained:true,maintenance_locks:[lock]}],recovery:{automatic:true,workers:[{worker_id:'one',adapter:'docker',eligible:false}]}}})});

@@ -8,6 +8,24 @@ recovery. Each capability has its own switch. Configuration changes require
 separate approval of the exact proposed plan.
 Existing background reviews and their handling of direct questions are unchanged.
 
+Invalid local fleet-status arguments report that no endpoint request was sent,
+with the exact correction needed. A transport failure still reports uncertain
+observation; it must not be mistaken for local input rejection or replayed as a
+new fleet action.
+
+Recipe discovery separately reports whether the pinned plan matches its current
+inspection binding. A changed recipe directory is a static configuration mismatch;
+it does not establish an SSH, host-key, container or serving-health failure. A
+rejected baseline never starts a native command.
+
+Completed chat replies also retain **Hermes dispatch evidence**, including
+discovery-wrapper failures that happened before a DSG domain handler ran. This
+collapsed detail distinguishes returned tool results, errors and missing results.
+It retains recognized tool names and result fingerprints, not raw arguments,
+credentials or result text. A returned result does not prove a fleet operation
+completed; check its separate domain receipt. If Hermes supplies no dispatch
+transcript, the detail reports unavailable evidence rather than zero activity.
+
 ## Try the interface without a model
 
 With Node 22.22.2 or later:
@@ -497,3 +515,181 @@ unfinished reply interrupted; it never replays the request. A newer conversation
 save supersedes older checkpoints. Unreadable checkpoints are preserved and
 reported without hiding healthy conversations. Back up the whole chat directory,
 including checkpoints, when preserving an in-progress reply.
+
+
+### Staged native history migration
+
+The native migration helper `stage_legacy_history` creates a separate private
+bundle containing Hermes's canonical `state.db`, byte-for-byte legacy source
+files, and a hashed manifest. Every conversation needs an explicit native owner
+and origin binding. Active or held work, source drift, duplicate destinations,
+and occupied bundles cause refusal; they are never replayed or overwritten.
+
+Historical text, timestamps, failed/interrupted states and domain receipts remain
+available in the native dashboard transcript. Existing domain receipts stay
+historical evidence; migration does not manufacture native tool invocations or
+promote them to successful operations. Native replies extend the imported
+conversation through Hermes's existing session store.
+
+This helper does not activate a profile or transfer credentials, pending work,
+Telegram ownership, or the live poller. Cutover still requires a current idle
+snapshot, complete configuration and owner migration, preserved Stop/Continue
+and study behavior, and exclusive-poller acceptance.
+
+
+### Staged native session controls
+
+The private native session-control API can stop one exact live guard/generation,
+checkpoint its pending FIFO and buffered input, and hold subsequent authorized
+questions. It invokes Hermes's own stop/cancellation path. Continue restores
+already accepted questions through Hermes's FIFO so a later Telegram message
+cannot merge into an earlier dashboard question. A changed session or owner,
+stale turn ID, and an uncertain admission are refused; neither restart nor a
+repeated Continue replays an uncertain request. Independent conversations remain
+available. Stopping chat does not cancel separately accepted fleet operations.
+
+Controls require the dedicated policy-2 runtime and explicit
+`DSG_NATIVE_SESSION_CONTROLS=1`. The launcher refuses this opt-in when its native
+admission guard is absent. Policy 2 retains Telegram updates, adds the guarded
+admission hook, and marks successfully buffered native text as accepted while
+preserving native burst merging. Previous private runtime installations remain
+untouched. Dashboard facade and live profile/cutover wiring remain separate;
+these staged controls do not switch the production bot.
+
+
+### Staged native dashboard facade
+
+`NativeDashboardChat` reads Hermes's complete canonical display history and
+fresh native execution state through the private client. Its in-memory view is
+not another transcript store. A live execution gets a separate exact-turn
+control even before Hermes saves an assistant response; unfinished historical
+text remains unverified. Stale observations become unavailable, not idle.
+
+The existing same-origin dashboard GET, Stop and Continue routes work with this
+facade. Stop derives a stable hold identity from the native guard/generation;
+Continue requires the currently observed, confirmed hold. Lost acknowledgments
+remain visible after reconstructing the dashboard and native gateway. Uncertain
+holds cannot enable Continue. Already accepted fleet actions remain independent.
+
+The existing New and Send routes also use native conversation creation and the
+native input injector. Before sending, the facade reads the exact saved dispatch
+receipt. A repeated request or restart therefore reconciles the original input;
+an uncertain receipt cannot cause another send. Research defaults resolve once
+from the current installation setting and remain part of that saved input.
+The response distinguishes native dispatch acceptance from a question already
+observed in the transcript. This is not proof of model or fleet completion.
+
+The pinned gateway fixture exercises those actual dashboard HTTP routes,
+restarts both sides while held, and verifies four saved questions run once each
+in order, and exercises New/Send with repeated and held input. Watcher
+freshness, complete profile migration and
+exclusive-poller cutover must be finished before selecting it in production.
+
+Queued, buffered and held questions appear separately from canonical replies,
+using actual native queue and checkpoint observations. Receipt-only inputs are
+labelled as accepted but unconfirmed, uncertain, or not accepted. They remain
+visible after restart without resending them. Fresh observation revisions update
+paused conversations even when their transcript has not changed; stale status
+is explicitly labelled. Automatic studies wait for unresolved input across all
+observed conversations. Study context remains expandable without requiring a
+fleet snapshot.
+
+The automatic follow-up watchers refresh native state before deciding to send
+and after asynchronous fleet observations, so an open dashboard is unnecessary.
+Unobserved, held and unconfirmed questions block automatic follow-ups. Studies
+and watchers run in one awaited sequence. A native conversation ID is saved
+before creation, preserving the same identity when an acknowledgment is lost.
+All watcher journals flush their file and directory before dispatch. Dated
+capability activity remains derived from actual tool receipts. This staged
+path still needs Stop-history correlation and live profile/channel cutover.
+
+Native recovery calls save their original generated action IDs before dispatch
+in private, atomic operation receipts. Each receipt is bound to the actual
+Hermes session, turn, tool-call ID, arguments and persisted assistant row. This
+is operation evidence; Hermes remains the conversation store. If dispatch or
+the final response is uncertain, the same invocation is never automatically
+reissued. `stargate_operation_status` reads saved receipts for the current
+conversation, including interrupted calls. Use their original IDs with
+`recovery_status` to inspect actual fleet outcomes: a returned tool response
+does not establish completed recovery. Dashboard history and follow-up watchers
+retain the same pre-dispatch IDs after reload and display-history compaction.
+
+Native dispatch receipts retain both the caller's original request identifier
+and the derived native dispatch UUID. Dashboard history exposes the original
+identifier only when the saved receipt matches the session and exact injected
+message, and the client verifies the UUID belongs to that conversation and
+original identifier. Queuing and process restart preserve this correlation so
+scheduled studies can recognize their own replies. Historical receipts without
+that metadata retain their native identity. A changed identifier or uncertain
+acknowledgment never triggers an automatic replay.
+
+An explicit research choice is part of the retained native dispatch fingerprint.
+Hermes binds that saved choice to the exact current session and turn before the
+model runs. Web tools reject disabled or unverifiable turn authorization, and
+the DSG research handlers check it again using the native dispatch context even
+if a lifecycle hook is skipped. Ordinary authorized Telegram turns retain the
+installation's research capability setting. The native fixture holds two queued
+questions with different research choices, restarts the gateway, and verifies
+that only the enabled question reaches the web service after Continue. This
+preserves per-request policy and does not activate the production native gateway.
+
+### Native setup studies
+
+The native study adapter preserves the existing schedule file and saves the
+conversation/request identities before asynchronous native creation or dispatch.
+Automatic studies require fresh idle conversation evidence and wait through
+held questions. An uncertain study is retained for inspection and never replayed
+by a restart, repeated start request, or scheduling tick.
+
+The complete existing study brief and dated previous-study evidence travel in
+the saved native input. They do not use Hermes's hook preview/spill path. The
+display restores the original question only after verifying its exact native
+input hash against the private dispatch record. Previous completed answers,
+follow-up corrections, source-read windows and configuration revisions from
+actual record-read receipts remain available. Research tools also receive that
+prior context in their private-query filter. The native fixture starts two
+studies through dashboard HTTP and proves the second model input includes the
+first answer in full beyond the hook's default 10,000-character threshold.
+
+
+### Existing Spark connection repair
+
+`spark_connection_status` lists configured connection names and retained
+hardware-verified discovery evidence, or reads one saved repair receipt.
+`repair_spark_connection` takes that existing connection and a stable repair UUID.
+It selects the newest authenticated retained scan matching the current IPv4
+configuration, refuses conflicting historical identities, rechecks the pinned
+host key and hardware identity, backs up normal `known_hosts` before adding only
+missing trust, and verifies the same alias through ordinary strict SSH. Alias
+identity files and routing are preserved. It never replaces conflicting keys,
+changes SSH configuration, or modifies remote services, models or firmware.
+
+The existing Spark setup capability and testing-mode gates apply. A stopped chat
+does not cancel an accepted connection operation. Dashboard restart guards check
+connection work independently. Receipts distinguish failure before promotion
+from an unconfirmed promotion or final verification; after uncertainty/restart,
+the same UUID only performs read-only normal-path reconciliation. Completed or
+failed IDs return their original receipts. New IDs cannot bypass an unresolved
+repair. A confirmed connection is not a recovered or qualified model service.
+
+This path requires a retained authenticated discovery identity and its private
+host-key receipt. An unauthenticated scan pin cannot establish that identity.
+Connection drift, missing evidence and unsupported destinations remain explicit
+failures, with no blind acceptance or fallback that weakens host-key checking.
+
+
+`inspect_spark_connection` adds read-only authentication diagnosis for those
+existing connections. It runs in the gateway process using the configured alias
+and retained authenticated host pin. It reports configured key-file availability,
+agent configuration, host-key verification, key offers, server acceptance, local
+signing failure and current hardware identity when accessible. Private key
+contents, paths, agent identities and raw SSH logs are not returned. No trust,
+SSH configuration, remote authorized keys or service is changed. Inspection
+permission controls this tool independently from permission to repair.
+
+A rejected login does not identify whether the cause is client credentials, an
+agent, account policy or remote authorized keys. The result leaves that cause
+undetermined, and does not infer a need for physical access or reboot. A failed
+network observation is likewise not proof of machine failure. When authentication
+succeeds, the retained hardware identity must still match; connection success is
+not evidence that a model service or cache has recovered.

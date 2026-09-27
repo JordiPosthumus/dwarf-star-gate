@@ -1,7 +1,7 @@
+import {saveFollowupJournal,followupStatus,followupReady} from './genie-followup.mjs';
 // Continue the original onboarding conversation after a local grant or receipt.
 import fs from 'node:fs';
-import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash} from 'node:crypto';
 const valid=id=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id??'');
 function requests(conversation){
   const found=new Map();
@@ -23,15 +23,12 @@ export class SparkAccessWatch {
     Object.assign(this,{filename,chat,access,isEnabled});this.busy=false;this.closed=false;
     this.records=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{};
   }
-  save(){
-    fs.mkdirSync(path.dirname(this.filename),{recursive:true,mode:0o700});const temp=this.filename+'.'+randomUUID();
-    fs.writeFileSync(temp,JSON.stringify(this.records,null,2)+'\n',{mode:0o600,flag:'wx'});fs.renameSync(temp,this.filename);
-  }
+  save(){saveFollowupJournal(this.filename,this.records);}
   async tick(){
     if(this.closed||this.busy||!this.isEnabled()||this.access.status().busy)return;
-    const summary=this.chat.status();if(!summary.available||summary.conversations.some(c=>c.busy||c.queued))return;
     this.busy=true;
     try{
+      const summary=await followupStatus(this.chat);if(this.closed||!this.isEnabled()||!followupReady(summary))return;
       for(const conversation of summary.conversations){
         if(conversation.queue_paused)continue;
         for(const request of requests(this.chat.get(conversation.id))){
@@ -49,7 +46,7 @@ export class SparkAccessWatch {
               `Initial Spark access ${request.id} has a new saved outcome (${op.state}). Read spark_access_status for this exact ID and report it. If key access is complete and the owner originally requested onboarding, use fresh discover_sparks evidence to continue that requested enrollment; access alone is not model or firmware readiness. For credentials_required direct the owner to the local New Spark access form. For verification_pending or uncertainty report the retained operation without automatically replaying a key write. Do not infer permission for firmware, reboot or a different recipe. This continues only the original owner request.`};
             this.records[id]=record;
           }
-          this.save();this.chat.submit(conversation.id,record.text,record.request_id,{research:false});record.state='dispatched';this.save();this.error=null;return;
+          this.save();await this.chat.submit(conversation.id,record.text,record.request_id,{research:false});record.state='dispatched';this.save();this.error=null;return;
         }
       }
       this.error=null;

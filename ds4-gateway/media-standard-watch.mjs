@@ -1,7 +1,7 @@
+import {saveFollowupJournal,followupStatus,followupReady,followupConversation} from './genie-followup.mjs';
 // Reconcile the owner's explicit per-machine media standard through actual Genie.
 // This watcher never installs, changes placement, or retries native work itself.
 import fs from 'node:fs';
-import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {machinesFor} from './fleet-machines.mjs';
 const terminal=new Set(['enrolled','failed_unchanged','failed_returned','needs_attention']);
@@ -23,14 +23,14 @@ export class MediaStandardWatch {
   Object.assign(this,{filename,config,chat,read,isEnabled,now});this.targets=mediaStandardTargets(config);this.busy=false;this.closed=false;
   this.state=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{targets:{}};
  }
- save(){fs.mkdirSync(path.dirname(this.filename),{recursive:true,mode:0o700});const temp=this.filename+'.tmp';fs.writeFileSync(temp,JSON.stringify(this.state)+'\n',{mode:0o600});fs.renameSync(temp,this.filename);}
+ save(){saveFollowupJournal(this.filename,this.state);}
  status(){return {enabled:this.targets.length>0&&this.isEnabled(),targets:this.targets.map(t=>({...t,...this.state.targets?.[t.key]})),audit:this.state.audit??null,error:this.error??null,scope:'Owner-requested standard, reconciled through Genie and native receipts. Enrolled is distinct from currently running; missing or uncertain work is never replayed.'};}
  async tick(){
   if(this.closed||this.busy||!this.targets.length||!this.isEnabled())return;
-  const chat=this.chat.status();if(!chat.available||chat.conversations.some(c=>c.busy||c.queued))return;
   this.busy=true;
   try{
-   const s=await this.read();if(this.closed||!this.isEnabled()||!s.enabled)return;
+   const chat=await followupStatus(this.chat);if(this.closed||!this.isEnabled()||!followupReady(chat))return;
+   const s=await this.read();if(this.closed||!this.isEnabled()||!s.enabled||!followupReady(await followupStatus(this.chat)))return;
    this.error=null;this.state.targets??={};let chosen=null;
    for(const t of this.targets){
     const old=this.state.targets[t.key]??{},host=s.hosts?.find(h=>h.id===t.worker_id);
@@ -75,13 +75,15 @@ export class MediaStandardWatch {
     // permit one corrective read-only turn; never spin on unsupported claims.
     const attempts=saved.dispatched===fingerprint?(saved.attempts??1):0;
     if(attempts>=2&&!saved.pending){saved.phase='needs_attention';this.save();return;}
-    if(!this.state.conversation_id){this.state.conversation_id=this.chat.create({title:'Standard media configuration'}).id;this.save();}
+    await followupConversation(this.chat,this.state,()=>this.save(),'Standard media configuration');
+    if(this.closed||!this.isEnabled()||!followupReady(await followupStatus(this.chat)))return;
     if(!saved.pending||saved.pending.fingerprint!==fingerprint)saved.pending={fingerprint,attempt:attempts+1,request_id:randomUUID(),text:(attempts?'The previous audit request ended without a fresh native audit receipt; its narrative is not verification. Do not repeat or infer its claimed results. Actually invoke the audit_media_standard tool once with an empty argument object now. If the tool cannot be called, report that the audit is unverified. ':'Maintain the owner’s saved media standard. Call audit_media_standard once with no arguments, then report its dated results briefly. ')+'This is read-only native container inspection; present does not prove generation or model-file integrity. Absent, changed and unavailable are distinct. Preserve all services, enrollments and files. Do not reinstall or dispatch queued jobs. The standard watcher handles the next wakeup.'};this.save();
-    this.chat.submit(this.state.conversation_id,saved.pending.text,saved.pending.request_id,{research:false});saved.dispatched=saved.pending.fingerprint;saved.attempts=saved.pending.attempt??attempts+1;delete saved.pending;saved.phase=saved.attempts>1?'correction_requested':'requested';this.save();return;
+    await this.chat.submit(this.state.conversation_id,saved.pending.text,saved.pending.request_id,{research:false});saved.dispatched=saved.pending.fingerprint;saved.attempts=saved.pending.attempt??attempts+1;delete saved.pending;saved.phase=saved.attempts>1?'correction_requested':'requested';this.save();return;
    }
    if(!chosen){if(audit?.targets?.length&&!audit.targets.some(a=>a.due)&&this.state.audit){this.state.audit.phase='observed';this.save();}return;}
    const {t,row,action,fingerprint}=chosen;
-   if(!this.state.conversation_id){this.state.conversation_id=this.chat.create({title:'Standard media configuration'}).id;this.save();}
+   await followupConversation(this.chat,this.state,()=>this.save(),'Standard media configuration');
+   if(this.closed||!this.isEnabled()||!followupReady(await followupStatus(this.chat)))return;
    // Persist before submit. A lost reply repeats the same chat request identity.
    if(!row.pending||row.pending.fingerprint!==fingerprint){
     const args=Object.fromEntries(Object.entries(t).filter(([k])=>k!=='key'));
@@ -90,7 +92,7 @@ export class MediaStandardWatch {
     const inspection=JSON.stringify({worker_id:t.worker_id,...(t.member!==undefined?{member:t.member}:{})});
     row.pending={fingerprint,request_id:randomUUID(),text:`Continue the owner's configured standard media setup for target ${target}. Read media_job_status, then call inspect_media_host with ${inspection} (no engine argument). ${action==='audit_inspect'?'The latest native audit needs attention. Read the saved standard_audit result and use only read-only inspection to explain whether the engine is absent, changed or unobserved. An old enrollment is historical evidence, not current integrity. Do not replace or reinstall an engine, change placement or infer absence from unavailable observation.':action==='repair'?'The saved evidence identifies a retained MEDIA source failure before any maintenance or LLM stop. Call repair_media_setup once with this exact target and failure timestamp. Its native reader must prove the old media container absent on the current LLM host; otherwise it refuses without changes. It can save only a unique stopped known source or separate fresh preparation, preserving all old files. Do not infer that the selected media ID names the LLM. Read status once afterward; the watcher will wake you for the permitted same-ID retry.':action==='retry'?'The configured reuse candidate was corrected after a confirmed read-only failure, and the executor reports retry_ready. Call setup_media_host once with this exact target and failure timestamp. It must archive the prior attempt and retain the same operation ID; all native gates still apply.':action==='inspect'?'The retained setup needs attention. Diagnose it using read-only observations and explain the specific blocker. Do not repeat setup, change its identity, replace a container or infer that a missing observation proves absence.':action==='finish'?'Native qualification and LLM return are observed; call setup_media_host once with this exact target to finish pending enrollment.':'If current status still shows this engine missing, call setup_media_host once with this exact target. The enabled standard configuration grants standing setup authority. Preserve existing engines, model/cache files, settings and another serving LLM; native controls enforce idle and restoration.'} Do not dispatch unrelated queued media jobs or change capability switches. Check the saved operation once after an action and finish with a short factual result. Acceptance is not completion. This watcher observes the operation and wakes you for the next missing engine after completion; the owner need not say proceed.`};this.save();
    }
-   const pending=row.pending;this.chat.submit(this.state.conversation_id,pending.text,pending.request_id,{research:false});row.dispatched=pending.fingerprint;delete row.pending;this.save();
+   const pending=row.pending;await this.chat.submit(this.state.conversation_id,pending.text,pending.request_id,{research:false});row.dispatched=pending.fingerprint;delete row.pending;this.save();
   }catch(error){this.error=error.message;}
   finally{this.busy=false;}
  }

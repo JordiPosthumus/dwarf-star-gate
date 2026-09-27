@@ -38,9 +38,10 @@ def github_content(data):
     return json.dumps(data)
 
 
-def register_research(config, context, emit):
+def register_research(config, context, emit, registry=None):
     import httpx
-    from tools.registry import registry
+    if registry is None:
+        from tools.registry import registry
     from tools.url_safety import is_safe_url, sensitive_query_param_name, create_ssrf_safe_client
 
     private_names = [s["id"].lower() for s in context.get("servers", []) if s.get("id")]

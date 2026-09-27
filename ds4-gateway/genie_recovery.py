@@ -9,8 +9,9 @@ TOOLSET='stargate_recovery'
 NAMES={'recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery','qualify_omlx_recovery','enroll_omlx_recovery'}
 
 
-def register_recovery(config,emit):
-    from tools.registry import registry
+def register_recovery(config,emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url=urllib.parse.urlsplit(config['url'])
     if (url.scheme!='http' or url.hostname!='127.0.0.1' or not url.port or url.path!='/api/genie/recovery-tools'
             or url.username or url.password or url.query or url.fragment):

@@ -10,8 +10,9 @@ TOOLSET = 'stargate_hourglass'
 NAMES = {'prepare_hourglass_measurement', 'hourglass_measurement_status', 'compare_hourglass_reports'}
 
 
-def register_hourglass(config, emit):
-    from tools.registry import registry
+def register_hourglass(config, emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url = urllib.parse.urlsplit(config['url'])
     if (url.scheme != 'http' or url.hostname != '127.0.0.1' or not url.port
             or url.path != '/api/genie/hourglass-tools' or url.username or url.password or url.query or url.fragment):

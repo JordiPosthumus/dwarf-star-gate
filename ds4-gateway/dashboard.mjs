@@ -1,3 +1,5 @@
+import {createChatTick} from './genie-followup.mjs';
+import {createNativeHermesContext,publishNativeHermesDescriptor} from './genie-native-context.mjs';
 import {SparkAccess,handleSparkAccessSettings} from './spark-access.mjs';
 import {createSparkAccessTransport} from './spark-access-transport.mjs';
 import {SparkAccessWatch} from './spark-access-watch.mjs';
@@ -10,6 +12,7 @@ import {createMediaResources} from './media-resources.mjs';
 import {createSparkMediaQualification} from './spark-media-qualification.mjs';
 import {sparkInspectionSync} from './spark-inspection.mjs';
 import {createSparkEnrollment} from './spark-enrollment.mjs';
+import {createSparkConnectionRepair} from './spark-connection-repair.mjs';
 import {SparkSetupWatch} from './spark-setup-watch.mjs';
 import {SparkDiscoveryWatch} from './spark-discovery-watch.mjs';
 import {createSparkDiscovery,configuredSSH} from './spark-discovery.mjs';
@@ -91,6 +94,7 @@ assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/media.js',['media.js','text/javascript']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
 assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
+assets.set('/genie-pending.js',['genie-pending.js','text/javascript']);
 assets.set('/genie-progress.js',['genie-progress.js','text/javascript']);
 assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
 assets.set('/spark-access.js',['spark-access.js','text/javascript']);
@@ -144,7 +148,7 @@ export function proxyMediaFile(config,req,res,route){
       res.on('close',()=>upstream.destroy());upstream.end();
     }
 
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null, telegram = null, sparkAccess = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null, telegram = null, sparkAccess = null, nativeHermes = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -221,6 +225,8 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
         if(['prepare','start'].includes(input.action)&&getSnapshot().gateway?.genie_capabilities?.hourglass===false)return reply(409,{error:'Hourglass measurements are switched off. Existing runs continue.'});
         void (tool?hourglass.tool(input):hourglass.change(input)).then(value=>reply(200,tool?value:hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
     }
+    if(nativeHermes?.handle(req,res))return;
+    if(req.url==='/api/genie/spark-connections'&&req.method==='GET')return reply(200,{configured:Boolean(sparkSetup),busy:sparkSetup?.connectionBusy?.()??false});
     if(sparkSetup?.handle(req,res))return;
     if(mediaTools?.handle(req,res))return;
     if(queueTools?.handle(req,res))return;
@@ -228,14 +234,19 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if(powerTools?.handle(req,res))return;
     if(req.url==='/api/genie/admission'&&req.method==='GET'){void Promise.resolve(admissionTools?.tool({action:'status'})??{configured:false,busy:false}).then(value=>reply(200,value)).catch(()=>reply(503,{error:'Admission activity unavailable'}));return;}
     if(admissionTools?.handle(req,res))return;
-    if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
+    if(req.url==='/api/genie/chat'&&req.method==='GET'){
+      void Promise.resolve().then(()=>chat?.refresh?.()).then(()=>reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf})).catch(()=>reply(503,{error:'Current native chat evidence is unavailable.'}));return;
+    }
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
       const id=req.url.slice('/api/genie/chat/'.length);
-      try{
-        const conversation=chat.get(id);
-        if(!conversation.messages.some(m=>m.state==='working'&&m.gateway_call_id))return reply(200,conversation);
-        void readProgress().then(state=>reply(200,withGatewayProgress(chat.get(id),state))).catch(()=>reply(200,conversation));return;
-      }catch{return reply(404,{error:'Conversation not found.'});}
+      void (async()=>{
+        try{
+          await chat?.refresh?.(id);
+          const conversation=await chat.get(id);
+          if(!conversation.messages.some(m=>m.state==='working'&&m.gateway_call_id))return reply(200,conversation);
+          try{return reply(200,withGatewayProgress(await chat.get(id),await readProgress()));}catch{return reply(200,conversation);}
+        }catch(error){return reply(error?.code==='NATIVE_UNAVAILABLE'?503:404,{error:error?.code==='NATIVE_UNAVAILABLE'?'Current native chat evidence is unavailable.':'Conversation not found.'});}
+      })();return;
     }
     if(req.url==='/api/genie/chat'&&req.method==='POST'){
       const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
@@ -247,13 +258,13 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete chat request.'});},15000);
       req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
       req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>160000){ended=true;clearTimeout(timer);reply(413,{error:'Chat message too large.'});}});
-      req.on('end',()=>{clearTimeout(timer);if(ended)return;try{
+      req.on('end',async()=>{clearTimeout(timer);if(ended)return;try{
         const input=JSON.parse(body);
-        if(input.action?.startsWith('study-'))return reply(200,chat.study.change(input));
-        if(input.action==='new')return reply(201,chat.create());
-        if(input.action==='stop-reply'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,reply_id')throw new Error('Invalid reply control.');return reply(202,chat.stop(input.conversation_id,input.reply_id));}
-        if(input.action==='continue-queue'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,expected_reply_id')throw new Error('Invalid queue control.');return reply(202,chat.resume(input.conversation_id,input.expected_reply_id));}
-        if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
+        if(input.action?.startsWith('study-'))return reply(200,await chat.study.change(input));
+        if(input.action==='new')return reply(201,await chat.create());
+        if(input.action==='stop-reply'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,reply_id')throw new Error('Invalid reply control.');return reply(202,await chat.stop(input.conversation_id,input.reply_id));}
+        if(input.action==='continue-queue'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,expected_reply_id')throw new Error('Invalid queue control.');return reply(202,await chat.resume(input.conversation_id,input.expected_reply_id));}
+        if(input.action==='send')return reply(202,await chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
         return reply(400,{error:'Unknown chat action.'});
       }catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid JSON.':e.message});}});return;
     }
@@ -589,8 +600,9 @@ export async function runDashboard(configPath, port) {
   let sparkEnrollment=null;
   const sparkDiscovery=managementEnabled&&config.spark_setup?.enabled?createSparkDiscovery({directory:path.join(path.dirname(config.state_file),'genie','spark-discovery'),aliases:async()=>{const state=await workerControl(config.control_socket,'/workers');return configuredSSH({config,workers:state.workers,targets:sparkEnrollment?.targets});}}):null;
   if(managementEnabled&&config.spark_setup?.enabled)sparkEnrollment=createSparkEnrollment({directory:path.join(path.dirname(config.state_file),'genie','spark-enrollment'),targets:config.spark_setup.targets??{},discovery:sparkDiscovery,workers:async()=>{const state=await workerControl(config.control_socket,'/workers');return state.workers;}});
+  const connectionRepair=sparkDiscovery?createSparkConnectionRepair({directory:path.join(path.dirname(config.state_file),'genie','spark-connection-repair'),discovery:sparkDiscovery}):null;
   const sparkAccess=sparkDiscovery&&config.genie_chat?.python?new SparkAccess({directory:path.join(path.dirname(config.state_file),'genie','spark-access'),discovery:sparkDiscovery,transport:createSparkAccessTransport({python:config.genie_chat.python,directory:path.join(path.dirname(config.state_file),'genie','spark-access')}),isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,isTesting}):null;
-  const sparkSetup=managementEnabled?createSparkSetupTools(config,{access:sparkAccess,isDiscoveryEnabled:()=>gateway?.genie_capabilities?.inspection===true,discovery:sparkDiscovery,enrollment:sparkEnrollment,mediaQualification:config.spark_setup?.enabled?createSparkMediaQualification({directory:path.join(path.dirname(config.state_file),'genie','spark-media-qualification'),transport:setupTransport}):null,continuation:{resumePreparation:id=>sparkSetupWatch?.resumePreparation(id),status:id=>sparkSetupWatch?.status(id)??null,request:id=>{if(!sparkSetupWatch)throw new Error('Setup continuation requires Genie chat.');return sparkSetupWatch.request(id);}},isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
+  const sparkSetup=managementEnabled?createSparkSetupTools(config,{access:sparkAccess,connectionRepair,isDiscoveryEnabled:()=>gateway?.genie_capabilities?.inspection===true,discovery:sparkDiscovery,enrollment:sparkEnrollment,mediaQualification:config.spark_setup?.enabled?createSparkMediaQualification({directory:path.join(path.dirname(config.state_file),'genie','spark-media-qualification'),transport:setupTransport}):null,continuation:{resumePreparation:id=>sparkSetupWatch?.resumePreparation(id),status:id=>sparkSetupWatch?.status(id)??null,request:id=>{if(!sparkSetupWatch)throw new Error('Setup continuation requires Genie chat.');return sparkSetupWatch.request(id);}},isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
   operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
   const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({audit:input=>workerControl(config.control_socket,'/genie-media-audit',input,{channel:'gate_genie'}),repair:input=>workerControl(config.control_socket,'/genie-media-repair',input,{channel:'gate_genie'}),inspectInputs:input=>workerControl(config.control_socket,'/genie-media-inputs',input,{channel:'gate_genie'}),setup:input=>workerControl(config.control_socket,'/genie-media-setup',input,{channel:'gate_genie'}),resources:createMediaResources(config,{isEnabled:()=>isCapabilityEnabled('inspection')}),read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,standard_setup:mediaStandardWatch?.status()??null,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;
@@ -613,6 +625,13 @@ export async function runDashboard(configPath, port) {
   const applyGenieThinking=value=>{if(!value)return {applied:false};const applied={};if(value.chat){chatProviderConfig.reasoning_effort=value.chat;applied.chat=value.chat;}if(value.reviewer){runtimeGenie.reasoning_effort=value.reviewer;if(runtimeGenie.fallback&&typeof runtimeGenie.fallback==='object')runtimeGenie.fallback.reasoning_effort=value.reviewer;applied.reviewer=value.reviewer;}return {applied:true,...applied};};
   const admissionTools=managementEnabled?createAdmissionTools({config,resolveNativeWorker:async id=>(await workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'})).workers?.find(w=>w.id===id),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...chatProviderConfig,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
+  const nativeHermes=config.genie_chat?.native_hermes?.enabled===true?createNativeHermesContext({
+    notebook:config.genie_chat.operational_notebook===true?memory:null,
+    snapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),
+    tools:()=>({research:chatProviderConfig.research,inspection:chatProviderConfig.inspection,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig}),
+    isEnabled:isCapabilityEnabled,isTesting,
+  }):null;
+  let removeNativeDescriptor=null;
   const nativeMedia=createNativeMediaStatus(config);
   const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.(value)??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};
   const telegram=chat?new GenieTelegram({directory:path.join(path.dirname(config.state_file),'genie','telegram'),chat,snapshot}):null;
@@ -631,7 +650,7 @@ export async function runDashboard(configPath, port) {
   }:null,managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools,telegram,sparkAccess);
+  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools,telegram,sparkAccess,nativeHermes);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   telegram?.start();
   sparkSetup?.bind(server.address().port);
@@ -642,6 +661,11 @@ export async function runDashboard(configPath, port) {
   recoveryTools?.bind(server.address().port);
   operations?.bind(server.address().port);
   hourglass?.bind(server.address().port);
+  if(nativeHermes){
+    nativeHermes.bind(server.address().port);
+    try{removeNativeDescriptor=publishNativeHermesDescriptor(path.join(path.dirname(config.state_file),'genie','native-hermes','bridge.json'),nativeHermes.toolConfig);}
+    catch(error){telegram?.close();server.closeAllConnections();server.close();throw error;}
+  }
   hourglass?.startObserving();
   sparkAccessWatch=chat&&sparkAccess?new SparkAccessWatch({filename:path.join(path.dirname(config.state_file),'genie','spark-access-watch.json'),chat,access:sparkAccess,isEnabled:()=>!isTesting()&&gateway?.genie_capabilities?.spark_setup===true}):null;
   sparkDiscoveryWatch=chat&&sparkSetup?new SparkDiscoveryWatch({filename:path.join(path.dirname(config.state_file),'genie','spark-discovery-watch.json'),chat,read:scan_id=>sparkSetup.tool({action:'discovery_status',scan_id}),isEnabled:()=>!isTesting()&&gateway?.genie_capabilities?.inspection===true}):null;
@@ -653,8 +677,8 @@ export async function runDashboard(configPath, port) {
   omlxQualificationWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'omlx-qualification',filename:path.join(path.dirname(config.state_file),'genie','omlx-qualification-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).operations.filter(o=>o.omlx_qualification===true).map(o=>({...o,action_id:o.id})),isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
   omlxEnrollmentWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'omlx-enrollment',filename:path.join(path.dirname(config.state_file),'genie','omlx-enrollment-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).omlx_enrollment?.operations??[],isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
   pairQualificationWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'qualification',filename:path.join(path.dirname(config.state_file),'genie','pair-qualification-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).operations.filter(o=>o.pair_qualification===true).map(o=>({...o,action_id:o.id})),isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
-  await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>{genie.tick();chat?.tick();void (async()=>{await mediaStandardWatch?.tick();await mediaWatch?.tick();await sparkSetupWatch?.tick();await sparkDiscoveryWatch?.tick();await sparkAccessWatch?.tick();await pairPreparationWatch?.tick();await pairEnrollmentWatch?.tick();await pairQualificationWatch?.tick();await omlxEnrollmentWatch?.tick();await omlxQualificationWatch?.tick();})();},10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);mediaStandardWatch?.close();mediaWatch?.close();sparkSetupWatch?.close();sparkDiscoveryWatch?.close();sparkAccessWatch?.close();sparkAccess?.close();pairPreparationWatch?.close();pairEnrollmentWatch?.close();pairQualificationWatch?.close();omlxEnrollmentWatch?.close();omlxQualificationWatch?.close();telegram?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), chatTick=createChatTick({chat,watchers:[mediaStandardWatch,mediaWatch,sparkSetupWatch,sparkDiscoveryWatch,sparkAccessWatch,pairPreparationWatch,pairEnrollmentWatch,pairQualificationWatch,omlxEnrollmentWatch,omlxQualificationWatch]}), genieTimer=setInterval(()=>{genie.tick();void chatTick.tick();},10000);
+  const close = () => { removeNativeDescriptor?.();monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);chatTick.close();mediaStandardWatch?.close();mediaWatch?.close();sparkSetupWatch?.close();sparkDiscoveryWatch?.close();sparkAccessWatch?.close();sparkAccess?.close();pairPreparationWatch?.close();pairEnrollmentWatch?.close();pairQualificationWatch?.close();omlxEnrollmentWatch?.close();omlxQualificationWatch?.close();telegram?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

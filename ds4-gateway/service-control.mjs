@@ -34,9 +34,10 @@ export async function readService(kind,config) {
 export async function assertDashboardIdle(config,{interrupt=false,fetchImpl=fetch}={}) {
   if(interrupt)return;
   const read=async (route,{legacyOptional=false}={})=>{const response=await fetchImpl(`http://127.0.0.1:${dashboardPort(config)}${route}`,{signal:AbortSignal.timeout(3000)});if(legacyOptional&&response.status===404)return {busy:false,unsupported:true};if(!response.ok)throw Error('Dashboard activity unavailable; leave it running');return response.json();};
-  const [chat,reviewer,power,admission,access]=await Promise.all([read('/api/genie/chat'),read('/api/genie'),read('/api/workers/power'),read('/api/genie/admission',{legacyOptional:true}),read('/api/genie/spark-access',{legacyOptional:true})]);
+  const [chat,reviewer,power,admission,access,connections]=await Promise.all([read('/api/genie/chat'),read('/api/genie'),read('/api/workers/power'),read('/api/genie/admission',{legacyOptional:true}),read('/api/genie/spark-access',{legacyOptional:true}),read('/api/genie/spark-connections',{legacyOptional:true})]);
   if((!Array.isArray(power.members)&&power.enabled!==false)||(power.members??[]).some(member=>member.busy))throw Error('Fleet power activity is running or unknown; leave the dashboard running until it finishes');
   if(!Array.isArray(chat.conversations)||chat.conversations.some(c=>c.busy||c.queued>0)||reviewer.busy)throw Error('Genie has active or queued work; leave the dashboard running until it finishes');
+  if(connections.busy!==false)throw Error('Spark connection repair is running or unknown; leave the dashboard running until it finishes');
   if(access.busy!==false)throw Error('Initial Spark access is running or unknown; leave the dashboard running until it finishes');
   if(admission.busy!==false)throw Error('Admission or serving checks are running or unknown; leave the dashboard running until they finish');
 }

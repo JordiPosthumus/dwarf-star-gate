@@ -47,6 +47,18 @@ test('uncertain submission reuses its durable request ID after restart',async t=
   await f.watch.tick();assert.equal(Object.values(f.watch.records)[0].state,'pending');
   const restored=new SparkDiscoveryWatch(f.options);await restored.tick();assert.equal(attempts,2);assert.equal(accepted.size,1);assert.equal(Object.values(restored.records)[0].state,'dispatched');
 });
+test('asynchronous native submission keeps follow-up pending until accepted, including lost response',async t=>{
+  const f=fixture(t),ids=[];let reject;
+  f.options.chat.submit=async(_id,_text,requestId)=>{ids.push(requestId);await new Promise((_,r)=>reject=r);};
+  const running=f.watch.tick();while(!reject)await new Promise(r=>setImmediate(r));
+  assert.equal(Object.values(f.watch.records)[0].state,'pending');
+  assert.equal(f.watch.busy,true);await f.watch.tick();assert.equal(ids.length,1);
+  reject(Error('Native response lost'));await running;
+  assert.equal(Object.values(f.watch.records)[0].state,'pending');
+  f.options.chat.submit=async(_id,_text,requestId)=>{ids.push(requestId);return {state:'accepted_unverified'};};
+  const restored=new SparkDiscoveryWatch(f.options);await restored.tick();
+  assert.deepEqual(ids,[ids[0],ids[0]]);assert.equal(Object.values(restored.records)[0].state,'dispatched');
+});
 test('a scan already read to terminal in the originating answer gets no redundant follow-up',async t=>{
   const f=fixture(t);f.message.spark_setup.events.push({tool:'spark_discovery_status',state:'complete',result:f.state.result});
   await f.watch.tick();assert.equal(f.calls.length,0);assert.equal(f.state.reads,0);

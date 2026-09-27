@@ -4,9 +4,34 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {hermesProvider} from './genie-hermes.mjs';
+import {hermesProvider,hermesGatewayWaitEnvironment} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {GenieMemory} from './genie-memory.mjs';
+
+test('installed Hermes uses gateway wait allowance for both stale-stream and socket deadlines',{
+  skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,
+},async t=>{
+  const {execFileSync}=await import('node:child_process');
+  const home=fs.mkdtempSync(path.join(os.tmpdir(),'sg-native-wait-policy-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
+  const seconds=72360000;
+  const code=`import json\nfrom types import SimpleNamespace\nfrom agent.chat_completion_helpers import _StreamingCall\nc=_StreamingCall.__new__(_StreamingCall)\nc.agent=SimpleNamespace(provider='custom',model='fixture',base_url='http://127.0.0.1:12345/v1')\nc.api_kwargs={'messages':[]}\nc._resolve_stale_timeout()\nprint(json.dumps({'stale':c._stream_stale_timeout,'socket':c._stream_timeouts()}))\n`;
+  const env={PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:process.env.DSG_TEST_HERMES_SOURCE,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1'};
+  const read=extra=>JSON.parse(execFileSync(process.env.DSG_TEST_HERMES_PYTHON,['-B','-c',code],{cwd:home,env:{...env,...extra},encoding:'utf8',stdio:['ignore','pipe','pipe']}));
+  assert.equal(read({}).stale,900);
+  const resolved=read(hermesGatewayWaitEnvironment(seconds*1000));
+  assert.equal(resolved.stale,seconds);assert.deepEqual(resolved.socket,[seconds,seconds,30]);
+});
+
+test('gateway wait policy reaches the chat child without changing direct-provider defaults',async t=>{
+  const {execFileSync}=await import('node:child_process');const python=execFileSync('which',['python3'],{encoding:'utf8'}).trim();
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-child-wait-policy-')),source=path.join(directory,'source');fs.mkdirSync(source);t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  fs.writeFileSync(path.join(source,'run_agent.py'),`import json,os\nclass AIAgent:\n def __init__(self,**kwargs): self.tools=[]; self.kw=kwargs\n def run_conversation(self,*args,**kwargs):\n  return {'completed':True,'final_response':json.dumps({'timeout':os.environ.get('HERMES_LOCAL_STREAM_STALE_TIMEOUT'),'max_tokens':self.kw['max_tokens'],'reasoning':self.kw['reasoning_config']})}\n`);
+  for(const gateway_tracking of [true,false]){
+    const provider=hermesProvider({python,source,url:'http://127.0.0.1:1/v1',model:'fixture',gateway_tracking,max_tokens:16384,reasoning_effort:'max'},{directory});t.after(()=>provider.close());
+    const value=JSON.parse((await provider.generate({message:'Read fixture',history:[],context:{servers:[],gateway:{queue_timeout_ms:72000000000,request_timeout_ms:360000000}},sessionId:'fixture-session',onDelta:()=>{}})).text);
+    assert.equal(value.timeout,gateway_tracking?'72360000':null);assert.equal(value.max_tokens,16384);assert.deepEqual(value.reasoning,{effort:'max'});
+  }
+});
 
 // Opt-in uses the actual Hermes library, but only a private synthetic provider.
 // It never looks up personal configuration or contacts a real model server.
@@ -99,14 +124,14 @@ test('bridge exposes progress counts without reasoning content or provider metad
 test('actual Hermes exposes and executes standalone recovery, power and admission tools',{
   skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000,
 },async t=>{
- for(const [capability,tool,route,header,args={}] of [['recovery','prepare_pair_recovery','/api/genie/recovery-tools','x-sg-recovery-tool',{worker_id:'fixture-pair'}],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool'],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool',{trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool',{action_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_trial','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',stage:'prepare',trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_trial','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',stage:'inspect',trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_rollout','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',rollout_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_rollout','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',rollout_id:'12345678-1234-4234-8234-123456789012',expected_finished_at:123}],['admission','admission_status','/api/genie/admission-tools','x-sg-admission-tool'],['admission','admission_admit','/api/genie/admission-tools','x-sg-admission-tool',{stage:'resume',fingerprint:'fixture',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'cache',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'glm-cache',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'routed-context',action_id:'12345678-1234-4234-8234-123456789012'}]]){
+ for(const [capability,tool,route,header,args={}] of [['power','inspect_fleet_service','/api/genie/power-tools','x-sg-power-tool',{worker:'fixture-worker'}],['recovery','prepare_pair_recovery','/api/genie/recovery-tools','x-sg-recovery-tool',{worker_id:'fixture-pair'}],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool'],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool',{worker:'fixture-worker',offset:12,limit:12,revision:'a'.repeat(64)}],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool',{trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool',{action_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_trial','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',stage:'prepare',trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_trial','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',stage:'inspect',trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_rollout','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',rollout_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_rollout','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',rollout_id:'12345678-1234-4234-8234-123456789012',expected_finished_at:123}],['admission','admission_status','/api/genie/admission-tools','x-sg-admission-tool'],['admission','admission_admit','/api/genie/admission-tools','x-sg-admission-tool',{stage:'resume',fingerprint:'fixture',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'cache',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'glm-cache',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'routed-context',action_id:'12345678-1234-4234-8234-123456789012'}]]){
   await t.test(`${capability}:${tool}`,async t=>{
    const directory=fs.mkdtempSync(path.join(os.tmpdir(),'genie-tool-registration-'));
    let modelCalls=0,toolCalls=0;
    const server=http.createServer((req,res)=>{
     if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture',context_length:131072}]}));return;}
     let raw='';req.on('data',chunk=>raw+=chunk);req.on('end',()=>{
-     if(req.url===route){assert.equal(req.headers[header],'fixture-token');const payload=JSON.parse(raw);if(tool==='prepare_pair_recovery'){assert.match(payload.action_id,/^[a-f0-9-]{36}$/);delete payload.action_id;}assert.deepEqual(payload,tool==='prepare_pair_recovery'?{action:'prepare-pair',...args}:tool==='admission_admit'?{action:'admit',...args}:tool==='verify_serving'?{action:'verify-worker',...args}:tool==='fleet_recipe_rollout'?{action:'recipe-rollout',...args}:tool==='fleet_recipe_trial'?{action:'recipe-trial',...args}:{action:'status',...args});toolCalls++;res.end(JSON.stringify({schema:1,fixture:'actual registered tool'}));return;}
+     if(req.url===route){assert.equal(req.headers[header],'fixture-token');const payload=JSON.parse(raw);if(tool==='prepare_pair_recovery'){assert.match(payload.action_id,/^[a-f0-9-]{36}$/);delete payload.action_id;}assert.deepEqual(payload,tool==='prepare_pair_recovery'?{action:'prepare-pair',...args}:tool==='inspect_fleet_service'?{action:'inspect',...args}:tool==='admission_admit'?{action:'admit',...args}:tool==='verify_serving'?{action:'verify-worker',...args}:tool==='fleet_recipe_rollout'?{action:'recipe-rollout',...args}:tool==='fleet_recipe_trial'?{action:'recipe-trial',...args}:{action:'status',...(tool==='fleet_power_status'&&!args.action_id&&!args.trial_id?{view:'index'}:{}),...args});toolCalls++;res.end(JSON.stringify({schema:1,fixture:'actual registered tool'}));return;}
      const body=JSON.parse(raw);modelCalls++;
      const message=modelCalls===1?{role:'assistant',content:null,tool_calls:[{id:'status-call',type:'function',function:{name:'tool_call',arguments:JSON.stringify({name:tool,arguments:args})}}]}:{role:'assistant',content:'The registered status tool returned its receipt.'};
      if(modelCalls===2)assert.match(JSON.stringify(body.messages),/actual registered tool/);
@@ -120,6 +145,7 @@ test('actual Hermes exposes and executes standalone recovery, power and admissio
    assert.equal(provider.info.can_act,true);
    const chat=new GenieChat({directory:path.join(directory,'chat'),provider});const c=chat.create();chat.submit(c.id,'Read status through the enrolled tool.','status-fixture');await chat.idle();
    const reply=chat.get(c.id).messages[1];assert.equal(reply.state,'complete',JSON.stringify(reply));assert.equal(toolCalls,1);assert.equal(modelCalls,2);assert.equal(reply[capability].events.find(e=>e.state==='complete').result.fixture,'actual registered tool');
+   const dispatch=reply.dispatch.calls.find(call=>call.target===tool||call.tool===tool);assert.equal(dispatch.state,'returned');assert.match(dispatch.result_sha256,/^[a-f0-9]{64}$/);
   });
  }
 });
