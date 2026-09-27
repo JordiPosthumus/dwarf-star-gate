@@ -9,8 +9,9 @@ TOOLSET = 'stargate_spark_setup'
 NAMES = {'request_spark_access', 'bootstrap_spark_access', 'spark_access_status', 'discover_sparks', 'spark_discovery_status', 'resume_spark_preparation', 'enroll_spark', 'enroll_discovered_spark', 'qualify_spark_media', 'setup_spark', 'spark_setup_status', 'prepare_spark', 'qualify_spark_llm', 'register_spark_llm'}
 
 
-def register_spark_setup(config, emit):
-    from tools.registry import registry
+def register_spark_setup(config, emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url = urllib.parse.urlsplit(config['url'])
     if (url.scheme != 'http' or url.hostname != '127.0.0.1' or not url.port or url.path != '/api/genie/spark-setup-tools'
             or url.username or url.password or url.query or url.fragment):

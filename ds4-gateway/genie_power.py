@@ -7,8 +7,9 @@ TOOLSET='stargate_fleet_power'
 NAMES={'fleet_power_status','fleet_power','fleet_routing','fleet_recipe_trial','fleet_recipe_rollout'}
 
 
-def register_power(config,emit):
-    from tools.registry import registry
+def register_power(config,emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url=urllib.parse.urlsplit(config['url'])
     if (url.scheme!='http' or url.hostname!='127.0.0.1' or not url.port or url.path!='/api/genie/power-tools'
             or url.username or url.password or url.query or url.fragment):

@@ -539,8 +539,9 @@ def selected_defaults(root, worker):
         except Exception:unavailable.append(file.name)
     return {'entries':entries,'unavailable':unavailable}
 
-def register_inspection(config, context, emit):
-    from tools.registry import registry
+def register_inspection(config, context, emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     workers=config.get('workers',{})
     # Enrolled inspection-only ranks need not have their own routed API.
     known={w['id'] for w in context.get('servers',[]) if isinstance(w.get('id'),str)} | set(workers)

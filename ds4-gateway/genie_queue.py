@@ -8,8 +8,9 @@ TOOLSET='stargate_queue'
 NAMES={'queue_balance_status','move_waiting_job'}
 
 
-def register_queue(config,emit):
-    from tools.registry import registry
+def register_queue(config,emit, registry=None):
+    if registry is None:
+        from tools.registry import registry
     url=urllib.parse.urlsplit(config['url'])
     if (url.scheme!='http' or url.hostname!='127.0.0.1' or not url.port or url.path!='/api/genie/queue-tools'
             or url.username or url.password or url.query or url.fragment):

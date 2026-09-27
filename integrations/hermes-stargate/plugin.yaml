@@ -1,0 +1,6 @@
+name: stargate
+version: 0.1.0
+kind: standalone
+description: Current fleet evidence and enrolled DSG operations for the native Hermes gateway.
+provides_tools:
+  - stargate_status
