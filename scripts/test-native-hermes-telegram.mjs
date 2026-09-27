@@ -174,7 +174,7 @@ assert.ok(heldModel,'Stop fixture reached the held native provider');
 const stoppable=await nativeChat.session(migratedId);
 const startDashboard=async()=>{
  const client=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:migratedId,session_key:stoppable.session_key}]});
- const facade=new NativeDashboardChat({client});
+ const facade=new NativeDashboardChat({client,info:()=>({research_available:true})});
  dashboardServer=createDashboard(()=>({}),undefined,null,null,null,null,null,null,facade);
  await new Promise(r=>dashboardServer.listen(0,'127.0.0.1',r));
  const url='http://127.0.0.1:'+dashboardServer.address().port;
@@ -186,8 +186,10 @@ const liveDashboard=await dashboardRequest();assert.equal(liveDashboard.status,2
 const liveExecution=liveDashboard.body.messages.find(m=>m.native_execution&&m.native_turn_id===stoppable.turn_id);
 assert.ok(liveExecution,'Dashboard exposes the actual native execution before the final answer exists');
 assert.equal((await dashboardRequest({action:'stop-reply',conversation_id:migratedId,reply_id:'old-transcript-row'})).status,400,'Dashboard rejects stale displayed controls');
-await nativeChat.submit(migratedId,'Preserved before Stop: first queued question.','stop-first-queued',{research:false});
-await nativeChat.submit(migratedId,'Preserved before Stop: second queued question.','stop-second-queued',{research:true});
+const firstInput={action:'send',conversation_id:migratedId,text:'Preserved before Stop: first queued question.',request_id:'stop-first-queued',research:false};
+assert.equal((await dashboardRequest(firstInput)).status,202,'Dashboard HTTP submits into the existing native conversation');
+assert.equal((await dashboardRequest(firstInput)).status,202,'Repeated HTTP send reconciles without duplicating input');
+assert.equal((await dashboardRequest({action:'send',conversation_id:migratedId,text:'Preserved before Stop: second queued question.',request_id:'stop-second-queued',research:true})).status,202);
 for(let i=0;i<50&&(await nativeChat.session(migratedId)).queued!==2;i++)await new Promise(r=>setTimeout(r,100));
 assert.equal((await nativeChat.session(migratedId)).queued,2);
 const wrongStop=await control({action:'stop',session_key:stoppable.session_key,turn_id:'a-stale-turn',hold_id:'44444444-4444-4444-8444-444444444444'});
@@ -200,7 +202,7 @@ assert.equal(stopped.state,'held');assert.equal(stopped.queued,2);assert.equal(d
 write('native-dashboard-held.json',dashboardStopped.body);
 releaseModel();
 const callsAfterStop=modelCalls;
-await nativeChat.submit(migratedId,'Preserved while stopped: dashboard input.','stop-late-dashboard');
+assert.equal((await dashboardRequest({action:'send',conversation_id:migratedId,text:'Preserved while stopped: dashboard input.',request_id:'stop-late-dashboard'})).status,202);
 updates.push({update_id:105,message:{message_id:106,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Preserved while stopped: Telegram input.'}});
 for(let i=0;i<50&&(await nativeChat.session(migratedId)).hold?.queued!==4;i++)await new Promise(r=>setTimeout(r,100));
 assert.equal((await nativeChat.session(migratedId)).hold.queued,4);
@@ -234,6 +236,9 @@ const policyReplies=policyInputs.map(input=>continued.messages[continued.message
 assert.equal(policyReplies[0].research.events[0].state,'failed');assert.match(policyReplies[0].research.events[0].error,/disabled/);
 assert.equal(policyReplies[1].research.events[0].state,'complete');
 write('native-stop-transcript.json',continued);
+const viaDashboard=await dashboardRequest({action:'new'});assert.equal(viaDashboard.status,201);
+assert.equal(viaDashboard.body.messages.length,0);assert.equal(viaDashboard.body.history_complete,true);
+assert.ok((await reconstructed.discover()).some(c=>c.id===viaDashboard.body.id),'HTTP-created conversation is owned and rediscovered by native Hermes');
 const result={native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');

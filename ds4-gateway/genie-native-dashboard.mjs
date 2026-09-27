@@ -1,7 +1,7 @@
-// Read/control projection for the dashboard. Native Hermes remains the sole
+// Dashboard projection and input adapter. Native Hermes remains the sole
 // transcript, scheduler and owner of pending questions. No production backend
 // selects this facade until submission, research and watcher migration is ready.
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {nativeRequestId} from './genie-native-chat.mjs';
 
 const digest=value=>createHash('sha256').update(value).digest('hex');
@@ -41,8 +41,9 @@ export function nativeDashboardView(conversation,previous,now=Date.now()){
 }
 
 export class NativeDashboardChat{
-  constructor({client,now=Date.now,isSuspended=()=>false,maxAgeMs=15000}){
+  constructor({client,now=Date.now,isSuspended=()=>false,maxAgeMs=15000,info=()=>({})}){
     this.client=client;this.now=now;this.isSuspended=isSuspended;this.maxAgeMs=maxAgeMs;
+    this.info=info;
     this.sessions=new Map();this.observed=new Map();this.failures=new Set();this.closed=false;
     this.refreshing=null;this.catalogueObserved=false;
   }
@@ -73,10 +74,46 @@ export class NativeDashboardChat{
   get(id){if(!this.fresh(id)||!this.sessions.has(id))throw unavailable();return structuredClone(this.sessions.get(id));}
   status(){
     const fresh=this.catalogueObserved&&!this.failures.has('*')&&[...this.client.bindings.keys()].every(id=>this.fresh(id));
-    return {engine:'Hermes',mode:'native',available:!this.closed&&fresh&&!this.isSuspended(),suspended:this.isSuspended(),
+    return {...this.info(),engine:'Hermes',mode:'native',available:!this.closed&&fresh&&!this.isSuspended(),suspended:this.isSuspended(),
       stop_reply_supported:true,native_observation_available:fresh,unreadable_conversations:[...this.failures],
       conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(c=>({id:c.id,title:c.title,updated_at:c.updated_at,
         busy:this.fresh(c.id)?c.busy:null,queued:this.fresh(c.id)?c.queued:null,queue_paused:c.queue_paused,observation_available:this.fresh(c.id)}))};
+  }
+  async create({id=randomUUID(),title='New conversation',purpose=null}={}){
+    if(this.closed||this.isSuspended())throw Error('New Genie conversations are paused.');
+    const conversation=await this.client.create({id,title,purpose});
+    this.sessions.set(id,nativeDashboardView(conversation,null,this.now()));
+    this.observed.set(id,this.now());this.failures.delete(id);
+    return this.get(id);
+  }
+  async submit(id,text,requestId,{research}={}){
+    if(this.closed||this.isSuspended())throw Error('New Genie questions are paused. Your draft has not been sent.');
+    if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Enter a message of up to 32,000 characters.');
+    if(research!==undefined&&typeof research!=='boolean')throw Error('Research option must be boolean.');
+    const identity=nativeRequestId(id,requestId),binding=this.client.binding(id);
+    // Do not accidentally run a setup study without its brief and dated prior
+    // evidence while that integration is still staged separately.
+    if(binding.purpose==='setup_research')throw Error('Native setup-study submission is not connected yet.');
+    let receipt=await this.client.receipt(id,requestId);
+    if(receipt?.request_id!==identity)throw Error('Native dispatch identity could not be verified. Do not replay the question.');
+    const absent=receipt.state==='unknown'&&Object.keys(receipt).sort().join(',')==='request_id,state';
+    if(absent){
+      const available=this.info().research_available===true;
+      research??=available;
+      if(research&&!available)throw Error('Web research is not configured or enabled for this installation.');
+      // Native Hermes persists this exact intent before admitting it. Never
+      // retry this POST automatically when its acknowledgment is lost.
+      receipt=await this.client.submit(id,text.trim(),requestId,{research});
+    }
+    if(receipt?.request_id!==identity||receipt.source_request_id!==requestId||receipt.session_key!==binding.session_key||receipt.message!==text.trim()||
+      (research!==undefined&&receipt.research!==research))throw Error('That request identity belongs to different input. No new question was sent.');
+    if(receipt.state!=='accepted_unverified')throw Error('Native dispatch remains unconfirmed. Retain this request identity; do not replay it.');
+    await this.refresh(id);
+    const view=this.get(id);
+    // An acceptance receipt is separate from native execution/history. In
+    // particular, a queued question need not have a native transcript row yet.
+    return {...view,native_submission:{request_id:requestId,native_request_id:identity,state:receipt.state,
+      observed_in_history:view.messages.some(m=>m.role==='user'&&m.request_id===requestId)}};
   }
   async stop(id,replyId){
     await this.refresh(id);const conversation=this.get(id);

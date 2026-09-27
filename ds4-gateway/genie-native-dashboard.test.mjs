@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {NativeDashboardChat,nativeDashboardView,nativeReplyId} from './genie-native-dashboard.mjs';
 import {chatProgress} from './ui/genie-progress.js';
+import {nativeRequestId} from './genie-native-chat.mjs';
 
 const base=()=>({id:'fixture',title:'Native fixture',history_complete:true,busy:true,queued:0,native_session_key:'key',native_session_id:'session',native_turn_id:'exact-native-turn',native_hold:null,observed_at:new Date(1000).toISOString(),messages:[{id:'old-row',role:'assistant',state:'working',text:'Old partial response',at:100}],updated_at:100});
 function fixture(){
@@ -50,4 +51,51 @@ test('concurrent refreshes cannot overwrite newer execution with an earlier resp
   const f=fixture();let release;const original=f.client.read;f.client.read=async()=>{const value=structuredClone(f.view);await new Promise(r=>release=r);f.client.read=original;return value;};
   const first=f.chat.refresh();await new Promise(r=>setImmediate(r));f.view.native_turn_id='next-turn';const second=f.chat.refresh();release();await Promise.all([first,second]);
   assert.equal(f.chat.get('fixture').native_turn_id,'next-turn');
+});
+
+function submissionFixture(){
+  const f=fixture();f.research=true;f.receipts=new Map();
+  f.client.bindings.set('fixture',{session_key:'key'});
+  f.client.binding=id=>{const b=f.client.bindings.get(id);if(!b)throw Error('Unbound conversation');return b;};
+  f.client.receipt=async(id,request)=>f.receipts.get(nativeRequestId(id,request))??{request_id:nativeRequestId(id,request),state:'unknown'};
+  f.client.submit=async(id,message,request,{research})=>{
+    f.calls.push({action:'send',id,request,research});
+    const receipt={request_id:nativeRequestId(id,request),source_request_id:request,session_key:'key',message,research,state:'accepted_unverified'};
+    f.receipts.set(receipt.request_id,receipt);
+    if(f.lost)throw Error('Lost native acknowledgment');
+    return receipt;
+  };
+  f.facade=()=>new NativeDashboardChat({client:f.client,now:()=>f.time,info:()=>({research_available:f.research}),isSuspended:()=>f.suspended===true});
+  f.chat=f.facade();return f;
+}
+
+test('native dashboard reconciles lost acceptance after reconstruction without another send',async()=>{
+  const f=submissionFixture();f.lost=true;
+  await assert.rejects(f.chat.submit('fixture','Inspect','request-12345',{research:false}),/Lost native/);
+  f.research=false;f.chat=f.facade();
+  const resumed=await f.chat.submit('fixture','Inspect','request-12345');
+  assert.equal(f.calls.length,1);assert.equal(resumed.native_submission.state,'accepted_unverified');
+  assert.equal(resumed.native_submission.observed_in_history,false,'Acceptance is not invented transcript history');
+  await assert.rejects(f.chat.submit('fixture','Different','request-12345'),/different input/);
+  await assert.rejects(f.chat.submit('fixture','Inspect','request-12345',{research:true}),/different input/);
+  assert.equal(f.calls.length,1);
+});
+
+test('research defaults use current configuration once and existing receipts retain their choice',async()=>{
+  const f=submissionFixture();await f.chat.submit('fixture','Inspect','request-12345');
+  assert.equal(f.calls[0].research,true);f.research=false;
+  await f.chat.submit('fixture','Inspect','request-12345');assert.equal(f.calls.length,1);
+  await f.chat.submit('fixture','Inspect later','request-54321');assert.equal(f.calls[1].research,false);
+  await assert.rejects(f.chat.submit('fixture','Inspect','request-98765',{research:true}),/not configured/);assert.equal(f.calls.length,2);
+});
+
+test('unknown saved dispatch and suspended or incomplete study paths cannot send new work',async()=>{
+  const f=submissionFixture();
+  await f.chat.submit('fixture','Inspect','request-12345');
+  f.receipts.get(nativeRequestId('fixture','request-12345')).state='unknown';
+  await assert.rejects(f.chat.submit('fixture','Inspect','request-12345'),/remains unconfirmed/);
+  f.suspended=true;await assert.rejects(f.chat.submit('fixture','Inspect','request-newer'),/paused/);
+  f.suspended=false;f.client.bindings.get('fixture').purpose='setup_research';
+  await assert.rejects(f.chat.submit('fixture','Inspect','request-study'),/not connected yet/);
+  assert.equal(f.calls.length,1);
 });

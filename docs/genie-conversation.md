@@ -557,7 +557,7 @@ untouched. Dashboard facade and live profile/cutover wiring remain separate;
 these staged controls do not switch the production bot.
 
 
-### Staged native dashboard read/control facade
+### Staged native dashboard facade
 
 `NativeDashboardChat` reads Hermes's complete canonical display history and
 fresh native execution state through the private client. Its in-memory view is
@@ -571,10 +571,19 @@ Continue requires the currently observed, confirmed hold. Lost acknowledgments
 remain visible after reconstructing the dashboard and native gateway. Uncertain
 holds cannot enable Continue. Already accepted fleet actions remain independent.
 
+The existing New and Send routes also use native conversation creation and the
+native input injector. Before sending, the facade reads the exact saved dispatch
+receipt. A repeated request or restart therefore reconciles the original input;
+an uncertain receipt cannot cause another send. Research defaults resolve once
+from the current installation setting and remain part of that saved input.
+The response distinguishes native dispatch acceptance from a question already
+observed in the transcript. This is not proof of model or fleet completion.
+
 The pinned gateway fixture exercises those actual dashboard HTTP routes,
 restarts both sides while held, and verifies four saved questions run once each
-in order. This is still a staged read/control component: submission/research
-policy, study scheduling, watcher freshness, complete profile migration and
+in order, and exercises New/Send with repeated and held input. Setup-study
+submission is explicitly unavailable until its brief and full prior-study
+evidence are wired. Study scheduling, pending-input display, watcher freshness, complete profile migration and
 exclusive-poller cutover must be finished before selecting it in production.
 
 Native dispatch receipts retain both the caller's original request identifier
