@@ -14,7 +14,7 @@ export function telegramChunks(text){
   return result;
 }
 export async function telegramAPI(token,method,body={}, {signal}={}){
-  if(!tokenPattern.test(token)||!['getMe','getWebhookInfo','getUpdates','sendMessage'].includes(method))throw Error('Invalid Telegram request.');
+  if(!tokenPattern.test(token)||!['getMe','getWebhookInfo','getUpdates','sendMessage','sendChatAction'].includes(method))throw Error('Invalid Telegram request.');
   let response,data;
   try{
     response=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:'POST',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify(body),
@@ -38,6 +38,7 @@ export class GenieTelegram {
     if(this.state.version!==1||!this.state.inbox||!this.state.outbox)throw Error('Telegram state is unreadable; the original file was preserved.');
     this.token=fs.existsSync(this.tokenFile)?fs.readFileSync(this.tokenFile,'utf8').trim():null;
     this.polling=false;this.flushing=false;this.configuring=false;this.closed=false;this.error=null;this.nextPoll=0;this.timer=null;this.controller=new AbortController();this.generation=0;
+    this.typingBusy=false;this.nextTyping=0;this.lastTypingAt=null;this.typingError=null;
     for(const row of Object.values(this.state.outbox))if(row.state==='sending')row.state='uncertain';
     if(this.state.enabled&&!tokenPattern.test(this.token??''))this.error='Saved Telegram credential is missing or invalid.';
   }
@@ -50,6 +51,7 @@ export class GenieTelegram {
       conversation_id:this.state.conversation_id,pairing_url:pairing&&this.state.bot?`https://t.me/${this.state.bot.username}?start=${pairing.code}`:null,
       pairing_expires_at:pairing?.expires_at??null,last_received_at:this.state.last_received_at??null,last_sent_at:this.state.last_sent_at??null,error:this.error,
       pending:Object.values(this.state.inbox).filter(r=>!r.complete).length,uncertain_deliveries:Object.values(this.state.outbox).filter(r=>r.state==='uncertain').length,
+      typing:{last_sent_at:this.lastTypingAt,error:this.typingError},
       scope:'One paired private Telegram account; same Genie conversations and capabilities as the dashboard. Telegram carries messages sent through this channel.'};
   }
   async configure(input){
@@ -195,7 +197,33 @@ export class GenieTelegram {
     }catch{this.error='Telegram could not advance a saved question. Its receipt and Genie conversation were retained.';}
     finally{this.flushing=false;}
   }
-  start(){if(this.timer)return;this.timer=setInterval(()=>{void this.poll();void this.flush();},1500);this.timer.unref();void this.poll();}
+  hasPendingReply(){
+    for(const row of Object.values(this.state.inbox)){
+      if(row.complete)continue;
+      const conversation=this.chat.get(row.conversation_id),index=conversation.messages.findIndex(m=>m.role==='user'&&m.request_id===row.request_id);
+      const reply=index>=0?conversation.messages[index+1]:null;
+      if(reply?.role==='assistant'&&!terminal.has(reply.state))return true;
+    }
+    const subscription=this.state.subscription;
+    return !!subscription&&this.chat.get(subscription.conversation_id).messages.slice(subscription.cursor)
+      .some(m=>m.role==='assistant'&&!terminal.has(m.state));
+  }
+  async typing(){
+    if(this.closed||this.typingBusy||this.configuring||!this.state.enabled||!this.state.owner||!this.token||this.now()<this.nextTyping)return;
+    try{if(!this.hasPendingReply())return;}catch{return;}
+    this.typingBusy=true;this.nextTyping=this.now()+4000;const generation=this.generation;
+    try{
+      const result=await this.call(this.token,'sendChatAction',{chat_id:this.state.owner.chat_id,action:'typing'},{signal:this.controller.signal});
+      if(generation!==this.generation||this.closed)return;
+      if(result!==true)throw Error('Typing acknowledgement missing');
+      this.lastTypingAt=this.now();this.typingError=null;
+    }catch(e){
+      if(generation!==this.generation||this.closed)return;
+      this.typingError='Typing indicator unavailable; saved questions and replies are unaffected.';
+      this.nextTyping=this.now()+(e.retry_after??10)*1000;
+    }finally{this.typingBusy=false;}
+  }
+  start(){if(this.timer)return;this.timer=setInterval(()=>{void this.poll();void this.flush();void this.typing();},1500);this.timer.unref();void this.poll();}
   close(){this.closed=true;clearInterval(this.timer);this.timer=null;this.controller.abort();}
 }
 

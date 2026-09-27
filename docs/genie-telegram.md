@@ -55,3 +55,9 @@ responses honor the retry delay. This is not an exactly-once delivery guarantee.
 Genie work and conversations remain intact. Configuration/credential replacements
 retain timestamped private backups. No model server or gateway restart is needed
 to connect or disconnect once this dashboard release is installed.
+
+While a reply is queued or being generated in this Telegram chat or its selected
+conversation, Gate Genie refreshes Telegram's **typing…** indicator. It stops
+when the reply finishes or the channel disconnects. Typing updates are ephemeral;
+failed updates back off independently and never replay or block the actual answer.
+The implementation uses Telegram's [sendChatAction](https://core.telegram.org/bots/api#sendchataction).
