@@ -61,6 +61,40 @@ native state before reconciling the owned hold. The remote process ignores SSH
 hangup, but host/process failures still require explicit recovery; this is not a
 host-level transaction or a guarantee against all external interference.
 
+## Qualify the currently running Spark pair
+
+An enrolled Spark plan can use `qualification_mode: serving-only` with
+`candidate_profile: baseline-cache-400k` to qualify an existing 400,000-context,
+two-request pair. Pin its `serving_containers` map with the full `head` and `rank`
+container IDs, its current image, recipe hashes and baseline provenance. Its
+`source_revision` must equal `baseline_revision`; this mode does not evaluate or
+adopt a different revision. The normal profile hash and inspection binding still
+apply, including custom pair names and independently serving hardware groups.
+
+`prepare` backs up the current environment, recipe launcher and complete Docker
+configuration for both ranks. It records container start times, mounts and bound
+launcher hashes. It does not build, tag, create, start or stop containers.
+`run` takes the same owned maintenance hold used by other trials, requires a
+separate serving LLM and waits for existing gateway and native work to finish.
+This temporarily reserves that pair for diagnostic inference; new household
+requests use the remaining serving capacity. The owner must have authorized
+that qualification window, including through an applicable standing instruction.
+
+The native protocol exercises arithmetic, a tool-result exchange, two interleaved
+128k histories with proved cold-to-warm reuse, edits/branches, near-limit chat
+input and two simultaneous requests. It then checks unchanged running identities,
+settings, mounts, launcher hashes and recipe bytes, and runs a readiness canary.
+The owned hold is released and routing conditionally resumes only after those
+preservation/readiness checks. A newer owner pause or an uncertain observation
+keeps its protection. No model restart, cache reset or production knob change is
+part of this mode.
+
+Inspect `result.qualification_passed`, the individual native samples,
+`result.restoration` and `readmission` together. `state: complete` alone means
+the operation finished and handed back safely; a failed capability check can
+still coexist with verified unchanged serving. Long-output capacity and general
+answer quality remain outside this protocol. Do not replay an uncertain stage.
+
 
 The local oMLX trial pins the source revision and original launcher/global/model
 settings hashes. Its worker name, installation root, credential-file path and

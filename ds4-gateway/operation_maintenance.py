@@ -40,7 +40,7 @@ class GatewayControl:
 
 class Maintenance:
     def __init__(self, directory, operation_id, worker_id, *, control, progress=lambda *args: None, sleep=time.sleep, purpose='serving'):
-        if purpose not in ('serving', 'hourglass', 'media', 'trial'):
+        if purpose not in ('serving', 'hourglass', 'media', 'trial', 'qualification'):
             raise ValueError('Unknown maintenance purpose')
         self.purpose = purpose
         if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', operation_id) or not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}', worker_id):
@@ -56,7 +56,7 @@ class Maintenance:
         data = self.control('/workers')
         if data.get('conditional_resume_version') != 1:
             raise RuntimeError('Gateway must support conditional readmission before this workflow starts')
-        if self.purpose in ('media', 'trial') and data.get('media_maintenance_version') != 1:
+        if self.purpose in ('media', 'trial', 'qualification') and data.get('media_maintenance_version') != 1:
             raise RuntimeError('Gateway must support the media LLM minimum before this workflow starts')
         matches = [w for w in data.get('workers', []) if w.get('id') == self.worker_id]
         recovery = [w for w in data.get('recovery', {}).get('workers', []) if w.get('worker_id') == self.worker_id]
@@ -107,6 +107,8 @@ class Maintenance:
             body.update(name='Genie media job', reason='Serve queued media while keeping another LLM available.', minimum_other_llms=1)
         elif self.purpose == 'trial':
             body.update(name='Approved measured server trial', reason='Measure the candidate and restore the original while another LLM keeps serving.', minimum_other_llms=1)
+        elif self.purpose == 'qualification':
+            body.update(name='Genie current-serving qualification', reason='Qualify this running pair after existing work finishes; keep another LLM serving. No model restart or setting change.', minimum_other_llms=1)
         result = self._receipt('acquire', body, '/maintenance-lock', 'lock')
         self.owned(require_idle=False)
         return result
@@ -151,6 +153,8 @@ class Maintenance:
             body['reason'] = 'The measurement ended and direct work finished; release only its own hold.'
         elif self.purpose == 'media':
             body['reason'] = 'Media work ended and the original LLM passed serving checks; release only its own hold.'
+        elif self.purpose == 'qualification':
+            body['reason'] = 'Current-serving checks ended and unchanged serving passed readiness; release only this qualification hold.'
         return self._receipt('release', body, '/release-maintenance-lock', 'release')
 
     def resume_if_unchanged(self):

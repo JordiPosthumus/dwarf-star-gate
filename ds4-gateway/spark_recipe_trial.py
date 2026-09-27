@@ -32,10 +32,17 @@ def validate(plan):
         raise ValueError('Unsupported recipe trial')
     if plan.get('candidate_profile','long-coding') not in ['long-coding','baseline-cache-400k']:
         raise ValueError('Unsupported candidate profile')
-    if plan.get('qualification_mode','comparison') not in ['comparison','candidate-only']:
+    if plan.get('qualification_mode','comparison') not in ['comparison','candidate-only','serving-only']:
         raise ValueError('Unsupported qualification mode')
-    if plan.get('qualification_mode')=='candidate-only' and plan.get('candidate_profile')!='baseline-cache-400k':
+    if plan.get('qualification_mode') in ('candidate-only','serving-only') and plan.get('candidate_profile')!='baseline-cache-400k':
         raise ValueError('Candidate-only acceptance must preserve serving capacity')
+    if plan.get('qualification_mode')=='serving-only':
+        pair=plan.get('serving_containers')
+        if (plan['kind']!='glm53-spark-pair-long-coding' or plan.get('source_revision')!=plan.get('baseline_revision')
+                or not isinstance(pair,dict) or set(pair)!={'head','rank'}
+                or any(not isinstance(value,str) or not re.fullmatch(r'[a-f0-9]{64}',value) for value in pair.values())
+                or pair['head']==pair['rank']):
+            raise ValueError('Serving-only qualification must pin both current containers and the unchanged source revision')
     if plan.get('baseline_kind','git') not in ['git','published-rollout']:
         raise ValueError('Unsupported baseline kind')
     if plan.get('baseline_kind')=='published-rollout':
@@ -112,7 +119,7 @@ class Executor:
         self.ssh(shlex.join(['mkdir','-m','700',self.remote]))
         self.ssh(shlex.join(['mkdir','-m','700',self.remote+'/candidate']))
         self.ssh(shlex.join(['tar','-xf','-','-C',self.remote+'/candidate']),input=source.read_bytes())
-        self.status('backing_up_and_building_candidate')
+        self.status('backing_up_current_serving' if self.plan.get('qualification_mode')=='serving-only' else 'backing_up_and_building_candidate')
         result=self.remote_action('prepare')
         atomic(self.folder/'prepare.result.json',result)
         if result.get('state')!='prepared':raise RuntimeError('Candidate preparation was not verified')
@@ -120,11 +127,11 @@ class Executor:
     def measure(self):
         prepared=json.loads((self.folder/'prepare.result.json').read_text())
         if prepared.get('state')!='prepared':raise RuntimeError('Prepare this trial first')
-        maintenance=Maintenance(self.folder,self.id,self.plan['worker'],control=self.control,purpose='trial',progress=lambda phase,detail:self.status(phase))
+        maintenance=Maintenance(self.folder,self.id,self.plan['worker'],control=self.control,purpose='qualification' if self.plan.get('qualification_mode')=='serving-only' else 'trial',progress=lambda phase,detail:self.status(phase))
         self.spare();self.status('acquiring_owned_hold');maintenance.acquire()
         maintenance.wait_idle(self.native_idle)
         self.spare()
-        self.status('measuring_and_restoring')
+        self.status('qualifying_current_serving' if self.plan.get('qualification_mode')=='serving-only' else 'measuring_and_restoring')
         # The remote transaction has its own finally-based restoration. If SSH
         # loses its answer, inspect it; never start the transaction a second time.
         result=self.remote_action('run',timeout=21600)
