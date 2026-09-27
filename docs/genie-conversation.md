@@ -647,3 +647,20 @@ This path requires a retained authenticated discovery identity and its private
 host-key receipt. An unauthenticated scan pin cannot establish that identity.
 Connection drift, missing evidence and unsupported destinations remain explicit
 failures, with no blind acceptance or fallback that weakens host-key checking.
+
+
+`inspect_spark_connection` adds read-only authentication diagnosis for those
+existing connections. It runs in the gateway process using the configured alias
+and retained authenticated host pin. It reports configured key-file availability,
+agent configuration, host-key verification, key offers, server acceptance, local
+signing failure and current hardware identity when accessible. Private key
+contents, paths, agent identities and raw SSH logs are not returned. No trust,
+SSH configuration, remote authorized keys or service is changed. Inspection
+permission controls this tool independently from permission to repair.
+
+A rejected login does not identify whether the cause is client credentials, an
+agent, account policy or remote authorized keys. The result leaves that cause
+undetermined, and does not infer a need for physical access or reboot. A failed
+network observation is likewise not proof of machine failure. When authentication
+succeeds, the retained hardware identity must still match; connection success is
+not evidence that a model service or cache has recovered.

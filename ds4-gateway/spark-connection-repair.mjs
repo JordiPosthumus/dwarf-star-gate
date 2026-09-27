@@ -7,6 +7,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {sparkIdentity,discoverySSHReason} from './spark-discovery.mjs';
 import {inspectNewSpark} from './spark-enrollment.mjs';
 import {promoteDiscoveryTrust} from './spark-discovery-trust.mjs';
+import {diagnoseSparkConnection} from './spark-connection-diagnosis.mjs';
 
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
 const digest=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -79,5 +80,5 @@ export function createSparkConnectionRepair({directory,discovery,inspect=inspect
       return publicRow(save({...row,state:mayHaveWritten?'verification_pending':'failed',stage:phase,error:error.discovery_reason?'Strict SSH identity inspection failed; use the diagnostic to distinguish trust, authentication and network availability.':error.message,diagnostic,finished_at:now(),updated_at:now()}));
     }finally{active.delete(connection);}
   };
-  return {status,repair,busy:()=>active.size>0};
+  return {status,repair,inspect:input=>diagnoseSparkConnection(input,{discovery}),busy:()=>active.size>0};
 }
