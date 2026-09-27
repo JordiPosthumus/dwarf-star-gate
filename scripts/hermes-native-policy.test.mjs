@@ -7,6 +7,7 @@ test('native policy refuses source drift and rejects changes beyond its recorded
  fs.mkdirSync(path.dirname(file),{recursive:true});
  const original=['# Native adapter fixture','drop_pending_updates=not is_reconnect, # webhook','drop_pending_updates=not is_reconnect, # poll','app, drop_pending_updates=True, error_callback=self._polling_error_callback_ref',''].join('\n');
  fs.writeFileSync(file,original);fs.writeFileSync(path.join(source,'unrelated.py'),'preserved\n');
+ fs.mkdirSync(path.join(source,'gateway/platforms'),{recursive:true});fs.writeFileSync(path.join(source,'gateway/platforms/base.py'),'        # On-entry self-heal: clear a guard whose owner task already exited.\n        state.task = asyncio.create_task(self._flush_text_debounce(session_key, delay))\n                    merge_pending_message_event(self._pending_messages, session_key, event, merge_text=True)\n');
  const git=(...args)=>execFileSync('git',args,{cwd:source,stdio:'pipe'});
  git('init','-q');git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Fixture');
  fs.appendFileSync(file,'# operator edit\n');assert.throws(()=>applyNativeHermesPolicy(source),/Refusing/);

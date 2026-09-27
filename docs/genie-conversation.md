@@ -530,3 +530,23 @@ This helper does not activate a profile or transfer credentials, pending work,
 Telegram ownership, or the live poller. Cutover still requires a current idle
 snapshot, complete configuration and owner migration, preserved Stop/Continue
 and study behavior, and exclusive-poller acceptance.
+
+
+### Staged native session controls
+
+The private native session-control API can stop one exact live guard/generation,
+checkpoint its pending FIFO and buffered input, and hold subsequent authorized
+questions. It invokes Hermes's own stop/cancellation path. Continue restores
+already accepted questions through Hermes's FIFO so a later Telegram message
+cannot merge into an earlier dashboard question. A changed session or owner,
+stale turn ID, and an uncertain admission are refused; neither restart nor a
+repeated Continue replays an uncertain request. Independent conversations remain
+available. Stopping chat does not cancel separately accepted fleet operations.
+
+Controls require the dedicated policy-2 runtime and explicit
+`DSG_NATIVE_SESSION_CONTROLS=1`. The launcher refuses this opt-in when its native
+admission guard is absent. Policy 2 retains Telegram updates, adds the guarded
+admission hook, and marks successfully buffered native text as accepted while
+preserving native burst merging. Previous private runtime installations remain
+untouched. Dashboard facade and live profile/cutover wiring remain separate;
+these staged controls do not switch the production bot.

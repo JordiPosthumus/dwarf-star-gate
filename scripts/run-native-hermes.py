@@ -29,5 +29,10 @@ if __name__ == '__main__':
     rendered = build_context_files_prompt(cwd=str(home), home_override=home)
     if any((home / name).read_text().strip() not in rendered for name in ('SOUL.md', 'AGENTS.md')):
         raise ValueError('Native Genie identity is shadowed or truncated; no gateway was started')
+    if os.environ.get('DSG_NATIVE_SESSION_CONTROLS') == '1':
+        import inspect
+        from gateway.platforms.base import BasePlatformAdapter
+        if 'gate_native_message(self, event, session_key)' not in inspect.getsource(BasePlatformAdapter.handle_message):
+            raise ValueError('Native Stop/Continue requires the verified admission policy; no gateway was started')
     discover_plugins()
     runpy.run_module('gateway.run', run_name='__main__')

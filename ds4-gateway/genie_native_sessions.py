@@ -227,9 +227,27 @@ def register_native_sessions(ctx):
                     return await self.observe_session(payload)
                 if payload.get('action') == 'transcript':
                     return await self.read_transcript(payload)
+                if payload.get('action') in ('stop', 'continue'):
+                    return await self.control_session(payload)
                 return self.requests.dispatch(payload)
             except ValueError as error:
                 return {'state': 'rejected', 'error': str(error)}
+
+        async def control_session(self, payload):
+            from genie_native_controls import get_native_controls
+            key = payload.get('session_key')
+            expected = {'action', 'session_key', 'hold_id'} | ({'turn_id'} if payload.get('action') == 'stop' else set())
+            if set(payload) != expected or key not in self.requests.allowed:
+                raise ValueError('Use an explicitly connected native session and exact control identity')
+            runner = self.gateway_runner
+            control = get_native_controls(runner)
+            entry = await runner.async_session_store.lookup_by_session_key(key)
+            if entry is None or entry.origin is None:
+                raise ValueError('Native session is unavailable')
+            adapter = runner._adapter_for_source(entry.origin)
+            if payload['action'] == 'stop':
+                return await control.stop(entry, adapter, turn_id=payload['turn_id'], hold_id=payload['hold_id'])
+            return await control.resume(entry, adapter, hold_id=payload['hold_id'])
 
         async def create_conversation(self, payload):
             if set(payload) != {'action', 'id', 'title', 'purpose'}:
@@ -287,9 +305,12 @@ def register_native_sessions(ctx):
             pending = getattr(adapter, '_pending_messages', None)
             if not isinstance(active, dict) or not isinstance(pending, dict):
                 return {'state': 'unavailable', 'session_key': key}
+            from genie_native_controls import controls_enabled, get_native_controls
+            control = get_native_controls(runner) if controls_enabled() else None
             return {'state': 'observed', 'session_key': key, 'session_id': entry.session_id,
                     'busy': key in active or bool(entry.active_turn_token),
-                    'turn_id': self.turn_identities.current(runner, adapter, key),
+                    'hold': control.observe(key) if control else None,
+                    'turn_id': (control.identities if control else self.turn_identities).current(runner, adapter, key),
                     'queued': runner._queue_depth(key, adapter=adapter),
                     'suspended': bool(entry.suspended), 'resume_pending': bool(entry.resume_pending),
                     'platform': entry.origin.platform.value, 'user_id': entry.origin.user_id,

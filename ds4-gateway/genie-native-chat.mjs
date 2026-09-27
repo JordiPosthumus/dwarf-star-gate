@@ -76,7 +76,7 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
     }
   }
   return {id,title,messages:result,native_session_id:session.session_id,native_session_key:session.session_key,
-    busy:session.busy,queued:session.queued,native_turn_id:session.turn_id??null,observed_at:session.observed_at,updated_at:Math.max(0,...result.map(m=>Number.isFinite(m.at)?m.at:0)),
+    busy:session.busy,queued:session.queued,native_turn_id:session.turn_id??null,native_hold:session.hold??null,observed_at:session.observed_at,updated_at:Math.max(0,...result.map(m=>Number.isFinite(m.at)?m.at:0)),
     pagination,history_complete:pagination?.offset===0&&Number.isSafeInteger(pagination?.total)&&pagination.returned===pagination.total,
     scope:'Native Hermes transcript. A completed reply or tool call does not prove the requested fleet outcome.'};
 }
@@ -148,6 +148,17 @@ export class NativeHermesChatClient{
     const receipt=await this.control({action:'send',request_id:identity,session_key:b.session_key,message:text.trim()});
     if(receipt.request_id!==identity||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
     return receipt;
+  }
+  async stop(id,turnId,holdId){
+    const b=this.binding(id);
+    const result=await this.control({action:'stop',session_key:b.session_key,turn_id:turnId,hold_id:holdId});
+    if(result.hold_id!==holdId||!['held','uncertain','released'].includes(result.state))throw Error('Native stop was not confirmed. Inspect the same turn and hold identity before retrying.');
+    return result;
+  }
+  async resume(id,holdId){
+    const b=this.binding(id),result=await this.control({action:'continue',session_key:b.session_key,hold_id:holdId});
+    if(result.hold_id!==holdId||result.state!=='released')throw Error('Native continuation was not confirmed. Retain its hold identity; do not replay uncertain input.');
+    return result;
   }
   async receipt(id,requestId){this.binding(id);return this.control({action:'status',request_id:nativeRequestId(id,requestId)});}
 }

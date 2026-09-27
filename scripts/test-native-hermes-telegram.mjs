@@ -47,7 +47,7 @@ const nativeChat=new NativeHermesChatClient({descriptor:home+'/native-gateway.js
 write('config.yaml',cfg);
 const log=fs.openSync(home+'/gateway.log','w',0o600);
 try{
-const launch=()=>spawn(source+'/.venv/bin/python',['-B',repo+'/scripts/run-native-hermes.py','--config',home+'/config.yaml'],{cwd:home,env:{PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:source,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',OPENAI_BASE_URL:origin+'/v1',OPENAI_API_KEY:'fixture-local-key',API_SERVER_KEY:key,API_SERVER_PORT:String(port),API_SERVER_HOST:'127.0.0.1',TELEGRAM_BOT_TOKEN:fakeToken,TELEGRAM_ALLOWED_USERS:'12345',DSG_DASHBOARD_ALLOWED_USERS:'12345',HERMES_TELEGRAM_DISABLE_FALLBACK_IPS:'1',LANG:'en_US.UTF-8'},stdio:['ignore',log,log]});
+const launch=()=>spawn(source+'/.venv/bin/python',['-B',repo+'/scripts/run-native-hermes.py','--config',home+'/config.yaml'],{cwd:home,env:{PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:source,HERMES_DISABLE_LAZY_INSTALLS:'1',DSG_NATIVE_SESSION_CONTROLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',OPENAI_BASE_URL:origin+'/v1',OPENAI_API_KEY:'fixture-local-key',API_SERVER_KEY:key,API_SERVER_PORT:String(port),API_SERVER_HOST:'127.0.0.1',TELEGRAM_BOT_TOKEN:fakeToken,TELEGRAM_ALLOWED_USERS:'12345',DSG_DASHBOARD_ALLOWED_USERS:'12345',HERMES_TELEGRAM_DISABLE_FALLBACK_IPS:'1',LANG:'en_US.UTF-8'},stdio:['ignore',log,log]});
 child=launch();
 let ready=false;for(let i=0;i<50;i++){if(child.exitCode!==null)throw Error('Native gateway exited; inspect '+home+'/gateway.log');try{const r=await fetch('http://127.0.0.1:'+port+'/v1/models',{headers:{authorization:'Bearer '+key},signal:AbortSignal.timeout(1000)});if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,500));}
 assert.ok(ready,'Native gateway API readiness');
@@ -57,7 +57,7 @@ for(let i=0;i<100;i++){
  await new Promise(r=>setTimeout(r,300));
 }
 const nativeRequest={action:'send',request_id:'12345678-1234-4234-8234-123456789abc',session_key:'agent:main:telegram:dm:12345',message:'Dashboard follow-up: recall the existing tool receipt from our Telegram history.'};
-const control=async(payload,auth=key)=>{const response=await fetch('http://127.0.0.1:'+port+'/api/platforms/stargate_control/events',{method:'POST',headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(5000)});return {status:response.status,body:await response.json()};};
+const control=async(payload,auth=key)=>{const response=await fetch('http://127.0.0.1:'+port+'/api/platforms/stargate_control/events',{method:'POST',headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});return {status:response.status,body:await response.json()};};
 assert.equal((await control(nativeRequest,'wrong-owner-token')).status,401,'Unauthenticated UI input rejected');
 assert.equal((await control({...nativeRequest,session_key:'agent:main:telegram:dm:54321'})).body.state,'rejected','Other sessions cannot receive UI input');
 const submitted=await control(nativeRequest);assert.equal(submitted.status,200);assert.equal(submitted.body.state,'accepted_unverified',JSON.stringify(submitted));
@@ -155,7 +155,50 @@ assert.equal(missingNativePolicy,0,'Complete native AGENTS guidance must reach e
 assert.equal(nativeAgentCalls,9,'All seven replies and two tool continuations carry the full operating guide');
 assert.equal(nativeTitleCalls,2,'Only verified native title-generation requests are separate from operational agent turns');
 assert.equal(legacyHistoryRequests,7,'Every native Telegram agent request receives the imported owner conversation; the separate dashboard session stays independent');
-const result={legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+// Stop exactly one live native turn, retain its queue plus new Telegram/UI input,
+// restart while held, then continue through Hermes without a second scheduler.
+holdNextModel=true;heldModel=false;
+updates.push({update_id:104,message:{message_id:105,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Hold this native turn for the exact Stop test.'}});
+for(let i=0;i<100&&!heldModel;i++)await new Promise(r=>setTimeout(r,100));
+assert.ok(heldModel,'Stop fixture reached the held native provider');
+const stoppable=await nativeChat.session(migratedId),stopHoldId='33333333-3333-4333-8333-333333333333';
+await nativeChat.submit(migratedId,'Preserved before Stop: first queued question.','stop-first-queued');
+await nativeChat.submit(migratedId,'Preserved before Stop: second queued question.','stop-second-queued');
+for(let i=0;i<50&&(await nativeChat.session(migratedId)).queued!==2;i++)await new Promise(r=>setTimeout(r,100));
+assert.equal((await nativeChat.session(migratedId)).queued,2);
+const wrongStop=await control({action:'stop',session_key:stoppable.session_key,turn_id:'a-stale-turn',hold_id:'44444444-4444-4444-8444-444444444444'});
+assert.equal(wrongStop.body.state,'rejected','A stale Stop cannot interrupt the current turn');
+assert.equal((await nativeChat.session(migratedId)).turn_id,stoppable.turn_id);
+const stopped=await nativeChat.stop(migratedId,stoppable.turn_id,stopHoldId);
+assert.equal(stopped.state,'held',JSON.stringify(stopped));assert.equal(stopped.queued,2);
+releaseModel();
+const callsAfterStop=modelCalls;
+await nativeChat.submit(migratedId,'Preserved while stopped: dashboard input.','stop-late-dashboard');
+updates.push({update_id:105,message:{message_id:106,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Preserved while stopped: Telegram input.'}});
+for(let i=0;i<50&&(await nativeChat.session(migratedId)).hold?.queued!==4;i++)await new Promise(r=>setTimeout(r,100));
+assert.equal((await nativeChat.session(migratedId)).hold.queued,4);
+assert.equal(modelCalls,callsAfterStop,'No held question starts an agent');
+await nativeChat.submit(created.id,'Independent dashboard still works while Telegram is held.','independent-while-held');
+for(let i=0;i<100;i++){const independent=await nativeChat.read(created.id,{all:true});if(independent.messages.filter(m=>m.role==='assistant'&&m.state==='complete').length===2)break;await new Promise(r=>setTimeout(r,100));}
+assert.equal((await nativeChat.read(created.id,{all:true})).messages.filter(m=>m.role==='assistant'&&m.state==='complete').length,2,'Hold is scoped to one native conversation');
+child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);
+assert.notEqual(child.exitCode,null);
+let holdPortReady=false;
+for(let i=0;i<80;i++){const probe=spawn(source+'/.venv/bin/python',['-c',`import socket; s=socket.socket(); s.bind(('127.0.0.1',${port})); s.close()`],{stdio:'ignore'});if(await new Promise(r=>probe.once('exit',code=>r(code===0)))){holdPortReady=true;break;}await new Promise(r=>setTimeout(r,1000));}
+assert.ok(holdPortReady);child=launch();
+let heldAfterRestart;
+for(let i=0;i<100;i++){try{heldAfterRestart=await nativeChat.session(migratedId);if(heldAfterRestart.hold)break;}catch{}await new Promise(r=>setTimeout(r,200));}
+assert.equal(heldAfterRestart.hold.hold_id,stopHoldId);assert.equal(heldAfterRestart.hold.state,'held');assert.equal(heldAfterRestart.hold.queued,4);
+const resumed=await nativeChat.resume(migratedId,stopHoldId);assert.equal(resumed.admitted,4);
+assert.deepEqual(await nativeChat.resume(migratedId,stopHoldId),resumed,'Repeated continuation cannot redispatch held input');
+let continued;
+for(let i=0;i<150;i++){continued=await nativeChat.read(migratedId,{all:true});if(!continued.busy&&continued.queued===0&&continued.messages.filter(m=>m.role==='user'&&m.text.startsWith('Preserved ')).length===4)break;await new Promise(r=>setTimeout(r,200));}
+const resumedInputs=continued.messages.filter(m=>m.role==='user'&&m.text.startsWith('Preserved ')).map(m=>m.text);
+assert.deepEqual(resumedInputs,['Preserved before Stop: first queued question.','Preserved before Stop: second queued question.','Preserved while stopped: dashboard input.','Preserved while stopped: Telegram input.']);
+assert.equal(continued.native_hold,null);
+assert.equal(missingNativePolicy,0);assert.equal(nativeAgentCalls,15);assert.equal(legacyHistoryRequests,12);
+write('native-stop-transcript.json',continued);
+const result={native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}
