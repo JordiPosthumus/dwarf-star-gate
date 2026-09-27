@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 from threading import Lock
 import time
+from genie_dispatch import dispatch_summary
 from genie_operating_policy import chat_operating_instructions
 
 WIRE = sys.stdout
@@ -155,6 +156,12 @@ def main():
             conversation_history=request["history"],
             stream_callback=None if review else lambda text: emit("delta", text=text) if isinstance(text, str) else None,
         )
+        if not review:
+            detect_failure = None
+            if isinstance(result.get('messages'), list):
+                from agent.display import _detect_tool_failure
+                detect_failure = _detect_tool_failure
+            emit('dispatch', event=dispatch_summary(result.get('messages'), expected_tools, detect_failure))
         # Hermes can return a terminal failure instead of raising. Its
         # final_response may then contain a raw provider error, not model prose.
         if result.get("failed") or result.get("interrupted") or result.get("completed") is False:

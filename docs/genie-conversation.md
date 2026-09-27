@@ -8,6 +8,14 @@ recovery. Each capability has its own switch. Configuration changes require
 separate approval of the exact proposed plan.
 Existing background reviews and their handling of direct questions are unchanged.
 
+Completed chat replies also retain **Hermes dispatch evidence**, including
+discovery-wrapper failures that happened before a DSG domain handler ran. This
+collapsed detail distinguishes returned tool results, errors and missing results.
+It retains recognized tool names and result fingerprints, not raw arguments,
+credentials or result text. A returned result does not prove a fleet operation
+completed; check its separate domain receipt. If Hermes supplies no dispatch
+transcript, the detail reports unavailable evidence rather than zero activity.
+
 ## Try the interface without a model
 
 With Node 22.22.2 or later:
