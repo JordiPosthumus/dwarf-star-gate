@@ -39,6 +39,32 @@ SQLite WAL-reset vulnerability predicate. Its private installation receipt
 records the Python build, SQLite version and SQLite source ID; reuse refuses a
 changed runtime. The existing core installer is unchanged.
 
+Before starting a dedicated native profile, stage the current owner's identity
+into an empty, separate directory:
+
+```sh
+/path/to/native/hermes/.venv/bin/python ds4-gateway/genie_native_identity.py \
+  --source-home /path/to/current/genie/hermes-home \
+  --home /path/to/new/native-home
+```
+
+The source `SOUL.md` remains byte-identical. The native `AGENTS.md` preserves the
+owner's instructions and adds the full shared DSG operating guide. Both source
+and resulting files have hashes in the private `dsg-identity.json` receipt;
+changed or occupied profiles are never overwritten. This copies identity only,
+not credentials, conversations or provider settings, and starts no process.
+
+Set the new profile's `context_file_max_chars` to at least the receipt's
+`required_context_file_max_chars`, retaining a larger existing allowance. This
+controls instruction-file truncation, not the model's context or output limits.
+Hermes's native plugin prompt sections have an 8,000-character aggregate limit,
+so they cannot carry the entire operating guide. The launch wrapper checks the
+private identity receipt, configured file allowance and actual Hermes-rendered
+identity before starting. The native channel fixture additionally checks that
+the complete guide reaches every operational agent request, including after restart and
+in a new dashboard conversation. Current fleet facts and eligibility still
+come from `stargate_status` and the guarded tools, not this static guide.
+
 Outstanding work includes the dashboard transcript facade, transcript and owner
 migration, operation-follow-up delivery, and live Telegram acceptance.
 Do not launch this against the live bot while the existing poller is running.

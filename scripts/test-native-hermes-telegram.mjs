@@ -1,10 +1,12 @@
 // Full native channel test: isolated profile, fake Bot API/model/tools, no real secrets.
 import {fileURLToPath} from 'node:url';
 import {NativeHermesChatClient} from '../ds4-gateway/genie-native-chat.mjs';
-import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import net from 'node:net';import {spawn} from 'node:child_process';import assert from 'node:assert/strict';
+import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import net from 'node:net';import {spawn,execFileSync} from 'node:child_process';import assert from 'node:assert/strict';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),source=process.argv[2];
 if(!source||!path.isAbsolute(source)||!fs.existsSync(path.join(source,'.venv/bin/python')))throw Error('Provide the absolute installed native Hermes source directory');
 const home=fs.mkdtempSync('/tmp/dsg-hermes-fixture-');fs.chmodSync(home,0o700);let child,modelCalls=0,toolCalls=0;let holdNextModel=false,heldModel=false,releaseModel;const serverErrors=[],telegramCalls=[],fakeToken='999999:fixture-not-a-real-bot-token';let updates=[{update_id:100,message:{message_id:101,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private',first_name:'Fixture'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Read the existing fixture action status.'}}];const key='native-fixture-key-0123456789abcdef',token='native-bridge-fixture-0123456789';
+execFileSync(source+'/.venv/bin/python',['-B',repo+'/ds4-gateway/genie_native_identity.py','--source-home',repo+'/genie','--home',home],{stdio:['ignore','pipe','pipe']});
+const nativeInstructions=fs.readFileSync(home+'/AGENTS.md','utf8').trim();let missingNativePolicy=0,nativeAgentCalls=0,nativeTitleCalls=0;
 const server=http.createServer((req,res)=>{let raw='';req.on('data',x=>raw+=x);req.on('end',async()=>{try{const body=raw?(req.headers['content-type']?.includes('application/json')?JSON.parse(raw):Object.fromEntries(new URLSearchParams(raw))):{};
 if(req.url.startsWith('/bot')){
  const method=req.url.split('/').at(-1);telegramCalls.push({method,body});let result=true;
@@ -19,6 +21,9 @@ if(req.url==='/api/genie/native-tools'){assert.equal(req.headers['x-sg-native-to
 if(req.url==='/api/genie/power-tools'){assert.equal(req.headers['x-sg-power-tool'],token);toolCalls++;res.end(JSON.stringify({state:'complete',fixture:'native-gateway-tool-receipt'}));return;}
 if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture',context_length:131072}]}));return;}
 assert.match(req.url,/chat\/completions/);modelCalls++;
+const isTitleRequest=!body.tools?.length&&body.response_format?.json_schema?.name==='session_title'&&body.messages?.[0]?.content?.startsWith('You name chat sessions.');
+if(isTitleRequest)nativeTitleCalls++;
+else{nativeAgentCalls++;if(!body.messages?.some(m=>m.role==='system'&&typeof m.content==='string'&&m.content.includes(nativeInstructions)))missingNativePolicy++;}
 if(holdNextModel){holdNextModel=false;heldModel=true;await new Promise(resolve=>{releaseModel=resolve;});}
 fs.appendFileSync(home+'/model-requests.jsonl',JSON.stringify({roles:body.messages?.map(m=>m.role),tools:body.tools?.map(t=>t.function?.name),last:body.messages?.at(-1)})+'\n',{mode:0o600});
 const hasReceipt=JSON.stringify(body.messages).includes('native-gateway-tool-receipt');const shouldCall=!hasReceipt&&body.tools?.length>0;
@@ -30,10 +35,10 @@ const portProbe=net.createServer();await new Promise(r=>portProbe.listen(0,'127.
 const write=(file,value)=>fs.writeFileSync(path.join(home,file),typeof value==='string'?value:JSON.stringify(value,null,2),{mode:0o600});
 fs.mkdirSync(home+'/plugins',{mode:0o700});fs.cpSync(repo+'/integrations/hermes-stargate',home+'/plugins/stargate',{recursive:true});
 write('bridge.json',{url:origin+'/api/genie/native-tools',token});
-const cfg={display:{busy_input_mode:'queue'},model:{default:'fixture',provider:'custom',base_url:origin+'/v1',context_length:131072},platform_toolsets:{api_server:['stargate_native'],telegram:['stargate_native'],stargate_control:['stargate_native']},plugins:{enabled:['stargate','telegram'],entries:{stargate:{allow_gateway_injection:true,settings:{enable_ui_bridge:true,module_directory:repo+'/ds4-gateway',bridge_descriptor:home+'/bridge.json'}}}},platforms:{stargate_control:{enabled:true,token:key,gateway_restart_notification:false,extra:{allowed_session_keys:['agent:main:telegram:dm:12345'],dashboard_owner_id:'12345'}},telegram:{enabled:true,token:fakeToken,extra:{preserve_pending_updates:true,base_url:origin+'/bot',base_file_url:origin+'/file/bot'}},api_server:{enabled:true,extra:{host:'127.0.0.1',port,key}}}};
+const cfg={context_file_max_chars:JSON.parse(fs.readFileSync(home+'/dsg-identity.json')).required_context_file_max_chars,display:{busy_input_mode:'queue'},model:{default:'fixture',provider:'custom',base_url:origin+'/v1',context_length:131072},platform_toolsets:{api_server:['stargate_native'],telegram:['stargate_native'],stargate_control:['stargate_native']},plugins:{enabled:['stargate','telegram'],entries:{stargate:{allow_gateway_injection:true,settings:{enable_ui_bridge:true,module_directory:repo+'/ds4-gateway',bridge_descriptor:home+'/bridge.json'}}}},platforms:{stargate_control:{enabled:true,token:key,gateway_restart_notification:false,extra:{allowed_session_keys:['agent:main:telegram:dm:12345'],dashboard_owner_id:'12345'}},telegram:{enabled:true,token:fakeToken,extra:{preserve_pending_updates:true,base_url:origin+'/bot',base_file_url:origin+'/file/bot'}},api_server:{enabled:true,extra:{host:'127.0.0.1',port,key}}}};
 write('native-gateway.json',{url:'http://127.0.0.1:'+port,api_key:key,control_token:key});
 const nativeChat=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:'fixture-conversation',session_key:'agent:main:telegram:dm:12345'}]});
-write('config.yaml',cfg);write('SOUL.md','You are a native gateway integration fixture.');write('AGENTS.md','Use only fixture tools. No real servers or external channels are configured.');
+write('config.yaml',cfg);
 const log=fs.openSync(home+'/gateway.log','w',0o600);
 try{
 const launch=()=>spawn(source+'/.venv/bin/python',['-B',repo+'/scripts/run-native-hermes.py','--config',home+'/config.yaml'],{cwd:home,env:{PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:source,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',OPENAI_BASE_URL:origin+'/v1',OPENAI_API_KEY:'fixture-local-key',API_SERVER_KEY:key,API_SERVER_PORT:String(port),API_SERVER_HOST:'127.0.0.1',TELEGRAM_BOT_TOKEN:fakeToken,TELEGRAM_ALLOWED_USERS:'12345',DSG_DASHBOARD_ALLOWED_USERS:'12345',HERMES_TELEGRAM_DISABLE_FALLBACK_IPS:'1',LANG:'en_US.UTF-8'},stdio:['ignore',log,log]});
@@ -138,7 +143,10 @@ write('native-dashboard-transcript.json',dashboardConversation);
 const dropped=telegramCalls.some(c=>c.method==='deleteWebhook'&&(c.body.drop_pending_updates===true||c.body.drop_pending_updates==='true'));
 const replied=telegramCalls.some(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool'));
 const typing=telegramCalls.some(c=>c.method==='sendChatAction'&&c.body.action==='typing');
-const result={at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+assert.equal(missingNativePolicy,0,'Complete native AGENTS guidance must reach every actual agent request without truncation');
+assert.equal(nativeAgentCalls,9,'All seven replies and two tool continuations carry the full operating guide');
+assert.equal(nativeTitleCalls,2,'Only verified native title-generation requests are separate from operational agent turns');
+const result={native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}
