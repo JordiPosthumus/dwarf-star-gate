@@ -11,6 +11,26 @@ for(const name of ['status-glm53-m3','start-glm53-m3','stop-glm53-m3','status-sp
 }
 process.once('exit',()=>fs.rmSync(directory,{recursive:true,force:true}));
 
+test('chat index pages all recipe identities without oversized history, and retains exact receipt reads',async()=>{
+ let changed=false;
+ const trials=Array.from({length:37},(_,i)=>({kind:'recipe_trial',trial_id:String(i).padStart(8,'0')+'-2284-4b34-a479-aab1e8d51513',worker:'glm53f-sparks34',profile:'enrolled-profile',stage:'rollout',state:'complete'}));
+ const full={...trials[0],result:{output:'ORIGINAL_ARTIFACT_'.repeat(10000)}};
+ const runner={busy:()=>false,receipts:()=>[]};
+ const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]}),catalogue:async()=>{throw Error('Unrelated oversized catalogue must not be read');},recipes:{
+  index:()=>[{kind:'recipe_profile',profile:'enrolled-profile',worker:'glm53f-sparks34',state:changed?'unavailable':'verified_plan'},...trials,{kind:'recipe_profile',profile:'other',worker:'glm53f-m3'}],
+  status:id=>id===trials[0].trial_id?[full]:[],
+ }});
+ const first=await tools.tool({action:'status',view:'index',worker:'glm53f-sparks34'});
+ assert.equal(first.pagination.total,38);assert.equal(first.entries.length,12);assert.equal(first.pagination.next_offset,12);
+ assert.ok(JSON.stringify(first).length<12000);assert.doesNotMatch(JSON.stringify(first),/ORIGINAL_ARTIFACT|"other"/);
+ const rows=[...first.entries];let offset=first.pagination.next_offset;
+ while(offset!==null){const page=await tools.tool({action:'status',view:'index',worker:'glm53f-sparks34',offset,revision:first.revision});rows.push(...page.entries);offset=page.pagination.next_offset;}
+ assert.equal(rows.length,38);assert.equal(new Set(rows.filter(r=>r.trial_id).map(r=>r.trial_id)).size,37);
+ assert.deepEqual((await tools.tool({action:'status',trial_id:trials[0].trial_id})).recipe_trials,[full]);
+ changed=true;await assert.rejects(tools.tool({action:'status',view:'index',worker:'glm53f-sparks34',offset:12,revision:first.revision}),/index changed/);
+ for(const extra of [{action_id:UUID()},{limit:21},{offset:-1},{revision:'bad'}])await assert.rejects(tools.tool({action:'status',view:'index',...extra}));
+});
+
 test('power script allowlist refuses unknown workers, actions and non-executable paths',()=>{
   assert.equal(powerScript('glm53f-m3','status',directory),path.join(directory,'status-glm53-m3'));
   assert.equal(powerScript('nope','start'),null);
