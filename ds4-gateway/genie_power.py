@@ -7,6 +7,10 @@ TOOLSET='stargate_fleet_power'
 NAMES={'fleet_power_status','inspect_fleet_service','fleet_power','fleet_routing','fleet_recipe_trial','fleet_recipe_rollout'}
 
 
+class FleetPowerInputError(ValueError):
+    """Known local validation failure before any endpoint request was sent."""
+
+
 def register_power(config,emit):
     from tools.registry import registry
     url=urllib.parse.urlsplit(config['url'])
@@ -21,9 +25,9 @@ def register_power(config,emit):
         emit('power',event={**event,'state':'reading'})
         try:
             if name=='fleet_power_status':
-                if 'trial_id' in args and 'action_id' in args:raise ValueError('Choose action_id or trial_id, not both')
+                if 'trial_id' in args and 'action_id' in args:raise FleetPowerInputError('Choose action_id or trial_id, not both. No endpoint request was sent.')
                 exact=any(key in args for key in ['trial_id','action_id'])
-                if exact and any(key in args for key in ['worker','offset','limit','revision']):raise ValueError('Choose an exact receipt or an index page, not both')
+                if exact and any(key in args for key in ['worker','offset','limit','revision']):raise FleetPowerInputError('An exact receipt lookup uses action_id or trial_id alone; omit worker, offset, limit and revision. No endpoint request was sent.')
                 payload={'action':'status',**{key:args[key] for key in ['trial_id','action_id'] if key in args}} if exact else {'action':'status','view':'index',**{key:args[key] for key in ['worker','offset','limit','revision'] if key in args}}
             elif name=='inspect_fleet_service':payload={'action':'inspect','worker':args['worker']}
             elif name=='fleet_recipe_trial':payload={'action':'recipe-trial','profile':args['profile'],'stage':args['stage'],'trial_id':args['trial_id']}
@@ -37,6 +41,12 @@ def register_power(config,emit):
                 result=json.loads(raw)
             emit('power',event={**event,'state':'complete','finished_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),'result':result})
             return json.dumps(result)
+        except FleetPowerInputError as error:
+            message = str(error)
+            emit('power',event={**event,'state':'failed','finished_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+                                'error':message,'error_code':'invalid_arguments','no_request_sent':True})
+            return json.dumps({'error':message,'code':'invalid_arguments','no_request_sent':True,
+                               'next_step':'Correct the read-only lookup arguments and use the same existing receipt ID. No fleet action was attempted.'})
         except Exception as error:
             message='Fleet power request could not be confirmed. Read fleet_power_status for the same action ID; never repeat the request or claim it succeeded.'
             if isinstance(error,urllib.error.HTTPError):
