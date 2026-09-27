@@ -67,6 +67,23 @@ paired-media binding, served model and current context; it does not enroll
 recovery or change routing. Existing action IDs retain their results and are not
 replayed after dashboard interruption.
 
+For an independent input-capacity observation on an installed worker, Genie can
+use `verify_serving` with `check="routed-context"`, its worker ID and one action
+UUID. This queues one normal `idle-only` request through the Continuity Door and
+the existing model route. It sends raw token IDs totaling the observed context
+minus one, with a diagnostic one-token output budget. Native usage must confirm
+both counts and the total, with a completed response and gateway request ID.
+No route, serving limit, cache or process is changed.
+
+A shared route may select another worker. The receipt preserves its identity
+and native result but leaves the requested worker `unverified`; Genie must not
+repeat the request automatically to force placement. Follow the original action
+with `admission_status`. An interrupted or failed observation is never replayed.
+The proof covers raw-token input capacity on the answering worker only. It does
+not establish chat-template behavior, long output, simultaneous maximum contexts,
+general answer quality, or cache reuse. Existing production output and thinking
+defaults remain unchanged.
+
 ## Evidence and remaining acceptance
 
 Tests exercise every lost-acknowledgement boundary, file/configuration drift,

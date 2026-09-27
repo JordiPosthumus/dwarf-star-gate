@@ -86,7 +86,7 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
   };
   const checksBusy=()=>[...checks.values()].some(row=>row.state==='running');
   async function verifyWorker(input){
-    if(Object.keys(input).sort().join(',')!=='action,action_id,check,worker'||!/^[a-f0-9-]{36}$/.test(input.action_id??'')||!['gateway','cache','tools','glm-cache'].includes(input.check))throw Error('Specify one worker, check and action ID.');
+    if(Object.keys(input).sort().join(',')!=='action,action_id,check,worker'||!/^[a-f0-9-]{36}$/.test(input.action_id??'')||!['gateway','cache','tools','glm-cache','routed-context'].includes(input.check))throw Error('Specify one worker, check and action ID.');
     const prior=checks.get(input.action_id);
     if(prior){if(prior.worker!==input.worker||prior.check!==input.check)throw Error('Action ID belongs to a different serving check');return prior;}
     if(isTesting()||!isEnabled())throw Error('Serving checks are suspended or server_changes is switched off.');
@@ -94,7 +94,7 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
     const registry=await read(),worker=registry.workers?.find(w=>w.id===input.worker);
     if(!worker||!worker.is_healthy||worker.drained!==false||worker.operator_paused||worker.direct_reserved||worker.holds?.length||worker.maintenance_locks?.length)throw Error('Use a healthy, routing-enabled worker without an operator pause, maintenance hold or direct reservation.');
     let servingWorker=worker;
-    if(input.check!=='gateway'&&resolveNativeWorker){
+    if(!['gateway','routed-context'].includes(input.check)&&resolveNativeWorker){
       const native=await resolveNativeWorker(worker.id);
       if(native?.id!==worker.id||native.url!==worker.url)throw Error('Native endpoint identity changed; no diagnostic request was sent');
       servingWorker={...worker,api_key_file:native.api_key_file};

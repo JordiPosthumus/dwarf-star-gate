@@ -1,14 +1,56 @@
 // Explicit diagnostic inference only. This module never changes serving settings,
-// clears caches, drains workers, or claims a configured limit was exercised.
+// clears caches or drains workers. Each receipt states exactly what was exercised.
 import {randomUUID} from 'node:crypto';
 import {endpointHeaders} from './endpoint.mjs';
 import {mediaPair} from './media-pair.mjs';
 import {verifyRecovery} from './recovery-verify.mjs';
 
+async function routedContext({worker,config,registry,readDoor,fetchImpl,now,onSample}){
+  const context=worker.context_length,route=registry.model_routes?.[worker.served_model];
+  if(!Number.isSafeInteger(context)||context<8192||context>2000000)throw Error('Routed context verification requires an observed context between 8192 and 2000000 tokens');
+  if(!Array.isArray(route)||!route.includes(worker.id))throw Error('The requested worker must belong to an existing model route; no route will be changed');
+  if(worker.drained!==false||worker.is_healthy!==true)throw Error('Worker must already be healthy and admitted for its routed context check');
+  if(!readDoor)throw Error('Door observation is unavailable');
+  const before=await readDoor();
+  if(before.holding!==false||before.core_ready!==true)throw Error('Door is holding or not ready; leave queued work untouched');
+  const callId=randomUUID(),started=now(),samples=[];
+  const record=sample=>{samples.push(sample);onSample(sample);};
+  // This is a normal queued request. It neither reserves the requested worker
+  // nor forces its selection. Only the actual response header can attribute it.
+  record({label:'context-request-intent',call_id:callId,requested_worker:worker.id,prompt_tokens:context-1,requested_output_tokens:1,priority:'idle-only',at:new Date(started).toISOString()});
+  const timeout=config.request_timeout_ms??360000000;
+  if(!Number.isSafeInteger(timeout)||timeout<=0||timeout>2147483647)throw Error('Configured request timeout is invalid');
+  const response=await fetchImpl(`http://127.0.0.1:${config.port}/v1/completions`,{
+    method:'POST',redirect:'error',headers:{authorization:`Bearer ${config.api_key}`,'content-type':'application/json',
+      'x-dsg-model':worker.served_model,'x-session-affinity':`genie-context-${callId}`,'x-dsg-priority':'idle-only',
+      'x-dsg-observer':'serving-check','x-dsg-call-id':callId},
+    body:JSON.stringify({model:'PoolModel',prompt:Array(context-1).fill(42),max_tokens:1,stream:false}),
+    signal:AbortSignal.timeout(timeout)});
+  const observedWorker=response.headers.get('x-ds4-node'),requestId=response.headers.get('x-request-id');
+  record({label:'context-response-headers',call_id:callId,request_id:requestId,worker:observedWorker,http_status:response.status,elapsed_ms:now()-started});
+  if(!response.ok){await response.body?.cancel();throw Error(`Routed context generation HTTP ${response.status}; inspect this action without replaying it`);}
+  const result=await response.json(),usage=result.usage??{},choice=result.choices?.[0];
+  const accepted=usage.prompt_tokens===context-1&&usage.completion_tokens===1&&usage.total_tokens===context
+    &&result.choices?.length===1&&['length','stop'].includes(choice?.finish_reason)&&typeof choice?.text==='string';
+  record({label:'context-boundary',call_id:callId,request_id:requestId,worker:observedWorker,configured_context:context,
+    prompt_tokens:usage.prompt_tokens??null,completion_tokens:usage.completion_tokens??null,total_tokens:usage.total_tokens??null,
+    finish_reason:choice?.finish_reason??null,accepted,elapsed_ms:now()-started});
+  if(!accepted)throw Error('Native usage and completed output did not prove the requested context boundary');
+  if(!observedWorker||!requestId||!route.includes(observedWorker))throw Error('Routed context response lacks an attributable worker and request ID from the observed model route');
+  const after=await readDoor();
+  const matched=observedWorker===worker.id,ready=after.holding===false&&after.core_ready===true;
+  return {state:matched&&ready?'passed':'unverified',check:'routed-context',worker:worker.id,observed_worker:observedWorker,samples,
+    proof:{context_length:context,native_boundary_accepted:true,requested_worker_verified:matched,request_id:requestId,call_id:callId},
+    door:{holding:after.holding,core_ready:after.core_ready,held:after.held},
+    ...(!matched?{reason:'The scheduler selected another worker; its result does not qualify the requested worker. Do not automatically repeat the check.'}:!ready?{reason:'Door readiness changed after generation; retain the native result and inspect continuity.'}:{}),
+    scope:'One normally scheduled idle-priority raw-token completion with native usage proving context minus one input tokens plus one output token. Attribution comes from the gateway response, including on shared routes. No chat-template, long-output, concurrent-generation, cache-hit or quality proof. No direct inference, routing/settings changes, cache reset, drain or restart; the one-token budget applies only to this diagnostic.'};
+}
+
 export async function runServingCheck({worker,check,config,registry,readDoor,fetchImpl=fetch,now=Date.now,onSample=()=>{}}){
-  if(!['gateway','cache','tools','glm-cache'].includes(check))throw Error('Unknown serving check');
+  if(!['gateway','cache','tools','glm-cache','routed-context'].includes(check))throw Error('Unknown serving check');
   const model=worker.served_model;
   if(!worker.url||!model)throw Error('Current worker endpoint and served model are required');
+  if(check==='routed-context')return routedContext({worker,config,registry,readDoor,fetchImpl,now,onSample});
   if(check==='glm-cache'){
     const pair=mediaPair(config,worker);
     if(!pair||pair.model!==model||!Number.isSafeInteger(worker.context_length)||worker.context_length<=0)throw Error('GLM recovery-cache verification requires the exact configured pair, served model and current context.');
