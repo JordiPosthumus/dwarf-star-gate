@@ -57,6 +57,18 @@ class NativeHistory(unittest.TestCase):
             with self.subTest(offset=offset, limit=limit), self.assertRaises(ValueError):
                 native_display_page(self.db, 'parent', offset, limit)
 
+    def test_operation_receipt_follows_its_exact_archived_native_row_and_changes_revision(self):
+        first = native_display_page(self.db, 'parent', 0, 500)
+        row = next(row for row in first['data'] if row.get('tool_calls'))
+        record = {'native_call': {'row_id': row['id']}, 'events': [{'action_id': 'retained-action', 'state': 'reading'}]}
+        observed = native_display_page(self.db, 'parent', 0, 500, operation_records=[record])
+        self.assertNotEqual(first['revision'], observed['revision'])
+        self.db.archive_and_compact('parent', [{'role': 'user', 'content': 'Compressed summary', '_compressed_summary': True}])
+        archived = native_display_page(self.db, 'parent', 0, 500, operation_records=[record])
+        decorated = [row for row in archived['data'] if row.get('dsg_operations')]
+        self.assertEqual(len(decorated), 1)
+        self.assertEqual(decorated[0]['dsg_operations'], [record])
+
     def test_full_revision_includes_request_metadata_even_when_message_count_is_unchanged(self):
         first = native_display_page(self.db, 'parent', 0, 1, request_metadata=lambda content: {'research': False})
         second = native_display_page(self.db, 'parent', 0, 1, request_metadata=lambda content: {'research': True})

@@ -16,6 +16,23 @@ const rows=[
   {id:4,role:'assistant',content:'Inspection has started.',finish_reason:'stop',timestamp:103},
 ];
 
+test('native recovery projection retains pre-dispatch IDs without manufacturing completed recovery',()=>{
+  const name='prepare_pair_recovery',args={worker_id:'fixture'},action='11111111-1111-4111-8111-111111111111';
+  const row={id:2,role:'assistant',content:'',timestamp:101,tool_calls:[{id:'call-1',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}],
+    dsg_operations:[{schema:1,receipt_id:'a'.repeat(64),scope:{session_key:observed.session_key},native_call:{row_id:2,tool_call_id:'call-1',tool:name},tool:name,arguments:args,
+      events:[{kind:'recovery',tool:name,state:'reading',action_id:action,request:args,at:'2026-09-27T00:00:00Z'}]}]};
+  const project=r=>projectNativeConversation({id:'conversation',session:observed,messages:[rows[0],r]});
+  const view=project(row);assert.equal(view.messages[1].recovery.events[0].action_id,action);assert.equal(view.messages[1].state,'working');
+  assert.throws(()=>project({...row,dsg_operations:[{...row.dsg_operations[0],arguments:{worker_id:'other'}}]}),/does not match/);
+  row.dsg_operations[0].events.push({...row.dsg_operations[0].events[0],state:'complete',result:{action_id:action,state:'running'}});
+  const completed=projectNativeConversation({id:'conversation',session:observed,messages:[rows[0],row,{id:3,role:'tool',tool_call_id:'call-1',content:JSON.stringify({action_id:action,state:'running'}),timestamp:102},rows[3]]});
+  assert.equal(completed.messages[1].recovery.events.length,2);assert.equal(completed.messages[1].recovery.events[1].result.state,'running');
+  const reused=projectNativeConversation({id:'conversation',session:observed,messages:[rows[0],row,
+    {id:4,role:'assistant',content:'',timestamp:103,tool_calls:[{id:'call-1',function:{name:'stargate_operation_status',arguments:'{}'}}]},
+    {id:5,role:'tool',tool_call_id:'call-1',content:'{"receipts":[]}',timestamp:104}]});
+  assert.equal(reused.messages[1].recovery.events.at(-1).tool,'stargate_operation_status','Earlier receipt cannot hide another persisted call with a reused model ID');
+});
+
 test('native transcript projects receipts without turning running operations into completed outcomes',()=>{
   const result=projectNativeConversation({id:'conversation',session:observed,messages:rows,pagination:{offset:0,limit:500,returned:4,total:4}});
   assert.equal(result.messages.length,2);

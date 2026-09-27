@@ -10,7 +10,7 @@ import fs from 'node:fs';import path from 'node:path';import http from 'node:htt
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),source=process.argv[2];
 if(!source||!path.isAbsolute(source)||!fs.existsSync(path.join(source,'.venv/bin/python')))throw Error('Provide the absolute installed native Hermes source directory');
 const home=fs.mkdtempSync('/tmp/dsg-hermes-fixture-');fs.chmodSync(home,0o700);let child,dashboardServer,modelCalls=0,toolCalls=0;let holdNextModel=false,heldModel=false,releaseModel;const serverErrors=[],telegramCalls=[],fakeToken='999999:fixture-not-a-real-bot-token';let updates=[{update_id:100,message:{message_id:101,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private',first_name:'Fixture'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Read the existing fixture action status.'}}];const key='native-fixture-key-0123456789abcdef',token='native-bridge-fixture-0123456789';
-let researchCalls=0;
+let researchCalls=0;const recoveryCalls=[];
 let dashboardFacade;const studyInputs=[],studyAnswer='Full retained finding. '.repeat(1600)+'END_OF_FULL_STUDY_EVIDENCE';
 execFileSync(source+'/.venv/bin/python',['-B',repo+'/ds4-gateway/genie_native_identity.py','--source-home',repo+'/genie','--home',home],{stdio:['ignore','pipe','pipe']});
 const migratedId='11111111-1111-4111-8111-111111111111';
@@ -30,8 +30,16 @@ if(req.url.startsWith('/bot')){
  if(['sendMessage','editMessageText'].includes(method))result={message_id:200+telegramCalls.length,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private'},text:body.text||''};
  res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,result}));return;
 }
-if(req.url==='/api/genie/native-tools'){assert.equal(req.headers['x-sg-native-tool'],token);res.end(JSON.stringify({schema:1,context:{servers:[],genie_capabilities:{fleet_power:true,research:true}},enabled_sections:['power','research'],tools:{power:{url:origin+'/api/genie/power-tools',token},research:{search_url:origin,extract_url:origin}}}));return;}
+if(req.url==='/api/genie/native-tools'){assert.equal(req.headers['x-sg-native-tool'],token);res.end(JSON.stringify({schema:1,context:{servers:[],genie_capabilities:{fleet_power:true,research:true,recovery:true}},enabled_sections:['power','research','recovery'],tools:{recovery:{url:origin+'/api/genie/recovery-tools',token},power:{url:origin+'/api/genie/power-tools',token},research:{search_url:origin,extract_url:origin}}}));return;}
 if(req.url==='/api/genie/power-tools'){assert.equal(req.headers['x-sg-power-tool'],token);toolCalls++;res.end(JSON.stringify({state:'complete',fixture:'native-gateway-tool-receipt'}));return;}
+if(req.url==='/api/genie/recovery-tools'){
+ assert.equal(req.headers['x-sg-recovery-tool'],token);assert.equal(body.action,'prepare-pair');
+ const folders=fs.readdirSync(home+'/plugin-data').map(name=>home+'/plugin-data/'+name+'/operation-receipts').filter(dir=>fs.existsSync(dir));
+ const records=folders.flatMap(dir=>fs.readdirSync(dir).filter(name=>name.endsWith('.json')).map(name=>JSON.parse(fs.readFileSync(dir+'/'+name))));
+ const saved=records.find(r=>r.events.some(e=>e.action_id===body.action_id&&e.state==='reading'));
+ assert.ok(saved,'Actual generated handle is durable before HTTP dispatch');assert.ok(saved.native_call.row_id>0);
+ recoveryCalls.push(body);res.end(JSON.stringify({action_id:body.action_id,worker_id:body.worker_id,state:'running'}));return;
+}
 if(req.url.startsWith('/search?')){researchCalls++;res.setHeader('content-type','application/json');res.end(JSON.stringify({results:[{title:'Fixture public docs',url:'https://example.com/docs',content:'Fixture research result'}]}));return;}
 if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture',context_length:131072}]}));return;}
 assert.match(req.url,/chat\/completions/);modelCalls++;
@@ -45,9 +53,11 @@ const latestUser=body.messages?.findLastIndex(m=>m.role==='user'),policyQuestion
 const isStudyQuestion=!isTitleRequest&&String(body.messages?.[latestUser]?.content).includes(STUDY_PROMPT);
 if(isStudyQuestion)studyInputs.push(body.messages[latestUser].content);
 const policyToolDone=body.messages?.slice(latestUser+1).some(m=>m.role==='tool');
-const shouldCall=Boolean(body.tools?.length)&&(policyQuestion?!policyToolDone:!hasReceipt);
-const tool=policyQuestion?{name:'stargate_web_search',arguments:{query:'Public fixture documentation'}}:{name:'fleet_power_status',arguments:{action_id:'12345678-1234-4234-8234-123456789012'}};
-const message=shouldCall?{role:'assistant',content:null,tool_calls:[{id:'native-tool-1',type:'function',function:{name:'tool_call',arguments:JSON.stringify(tool)}}]}:{role:'assistant',content:isStudyQuestion?studyAnswer:'Native Hermes gateway executed the enrolled tool.'};
+const receiptQuestion=String(body.messages?.[latestUser]?.content).includes('Native recovery receipt test');
+const receiptTools=body.messages?.slice(latestUser+1).filter(m=>m.role==='tool')??[];
+const shouldCall=Boolean(body.tools?.length)&&(receiptQuestion?receiptTools.length<2:policyQuestion?!policyToolDone:!hasReceipt);
+const tool=receiptQuestion?(receiptTools.length?{name:'stargate_operation_status',arguments:{}}:{name:'prepare_pair_recovery',arguments:{worker_id:'fixture-pair'}}):policyQuestion?{name:'stargate_web_search',arguments:{query:'Public fixture documentation'}}:{name:'fleet_power_status',arguments:{action_id:'12345678-1234-4234-8234-123456789012'}};
+const message=shouldCall?{role:'assistant',content:null,tool_calls:[{id:receiptQuestion?'native-receipt-'+receiptTools.length:'native-tool-1',type:'function',function:{name:'tool_call',arguments:JSON.stringify(tool)}}]}:{role:'assistant',content:isStudyQuestion?studyAnswer:'Native Hermes gateway executed the enrolled tool.'};
 
 if(body.stream){res.setHeader('Content-Type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:shouldCall?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');}else res.end(JSON.stringify({id:'fixture',model:'fixture',choices:[{message,finish_reason:shouldCall?'tool_calls':'stop'}]}));
 }catch(error){serverErrors.push(error.message);res.statusCode=500;res.end(JSON.stringify({error:'Fixture protocol assertion failed'}));}});});await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
@@ -286,6 +296,21 @@ assert.equal(watchView.busy,false);assert.equal(watchView.messages.filter(m=>m.r
 assert.equal(missingNativePolicy,0);assert.equal(toolCalls,5);
 const watchModelCalls=modelCalls;await new MediaWatch(watchOptions).tick();assert.equal(modelCalls,watchModelCalls,'Watcher reconstruction does not duplicate the completed native follow-up');
 write('native-watcher-acceptance.json',{conversation_id:acceptedWatch.conversation_id,creation_attempts:watcherCreates.length,requests:watchView.messages.filter(m=>m.role==='user').length,state:'passed'});
+const receiptConversation=await watcherChat.create({title:'Native receipt fixture'});
+await watcherChat.submit(receiptConversation.id,'Native recovery receipt test: inspect the enrolled pair.','native-receipt-fixture',{research:false});
+let receiptView;
+for(let i=0;i<100;i++){await watcherChat.refresh();receiptView=watcherChat.get(receiptConversation.id);if(!receiptView.busy&&receiptView.messages.some(m=>m.role==='assistant'&&m.state==='complete'))break;await new Promise(r=>setTimeout(r,100));}
+assert.equal(recoveryCalls.length,1);assert.equal(receiptView.messages.at(-1).state,'complete');
+const retainedRecovery=receiptView.messages.flatMap(m=>m.recovery?.events??[]).filter(e=>e.tool==='prepare_pair_recovery');
+assert.deepEqual(retainedRecovery.map(e=>e.state),['reading','complete']);
+assert.ok(retainedRecovery.every(e=>e.action_id===recoveryCalls[0].action_id&&e.native_receipt_id));
+assert.equal(retainedRecovery[1].result.state,'running','A returned tool receipt does not claim completed recovery');
+const receiptReload=new NativeDashboardChat({client:new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:migratedId,session_key:'agent:main:telegram:dm:12345'}]})});await receiptReload.refresh();
+assert.deepEqual(receiptReload.get(receiptConversation.id).messages.flatMap(m=>m.recovery?.events??[]),receiptView.messages.flatMap(m=>m.recovery?.events??[]));
+const operationRead=receiptView.messages.flatMap(m=>m.recovery?.events??[]).find(e=>e.tool==='stargate_operation_status');
+assert.equal(operationRead.result.receipts.length,1);assert.equal(operationRead.result.receipts[0].events[0].action_id,recoveryCalls[0].action_id);
+assert.equal(operationRead.result.receipts[0].state,'returned');
+assert.equal(missingNativePolicy,0);write('native-operation-receipt-acceptance.json',{action_id:recoveryCalls[0].action_id,events:retainedRecovery,state:'passed'});
 // Owner-sized synthetic catalogue, native SQLite history and real loopback HTTP.
 // No real owner transcript or model request is used by this performance check.
 const bulkRows=[];
@@ -317,7 +342,7 @@ assert.ok(measuredDashboard.get(bulkRows[76].id).messages.at(-1).text==='Retaine
 assert.equal(measuredDashboard.status().available,true);
 const bulkRefresh={syntheticConversations:77,catalogueSize:measuredClient.bindings.size,cold:coldRefresh,warm:warmRefresh};
 write('bulk-refresh-acceptance.json',bulkRefresh);
-const result={native_watcher_preserved:true,native_pending_input_preserved:true,bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===5&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+const result={native_operation_receipts_preserved:true,recoveryCalls:recoveryCalls.length,native_watcher_preserved:true,native_pending_input_preserved:true,bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===5&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{if(dashboardServer){dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));}releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}

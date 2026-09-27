@@ -2,12 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 
 const sections={
   inspection:['read_server_configuration','inspect_server','read_server_artifact'],
   research:['stargate_web_search','stargate_web_extract'],
   spark_setup:['inspect_spark_connection','repair_spark_connection','spark_connection_status','request_spark_access','bootstrap_spark_access','spark_access_status','discover_sparks','spark_discovery_status','resume_spark_preparation','enroll_spark','enroll_discovered_spark','qualify_spark_media','setup_spark','spark_setup_status','prepare_spark','qualify_spark_llm','register_spark_llm'],
-  recovery:['recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery','qualify_omlx_recovery','enroll_omlx_recovery'],
+  recovery:['stargate_operation_status','recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery','qualify_omlx_recovery','enroll_omlx_recovery'],
   power:['fleet_power_status','inspect_fleet_service','fleet_power','fleet_routing','fleet_recipe_trial','fleet_recipe_rollout'],
   media:['media_job_status','start_media_job','inspect_media_host','inspect_media_inputs','setup_media_host','repair_media_setup','audit_media_standard'],
   admission:['admission_status','admission_inspect','admission_admit','verify_serving'],
@@ -83,13 +84,31 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
         if(name==='tool_call'&&args){name=args.name;request=parse(args.arguments)??args.arguments;}
         if(typeof call.id==='string')calls.set(call.id,{name,request,reply:current,at:row.timestamp});
       }
+      for(const record of row.dsg_operations??[]){
+        const anchor=record.native_call,call=calls.get(anchor?.tool_call_id);
+        if(record.schema!==1||!/^[a-f0-9]{64}$/.test(record.receipt_id??'')||record.scope?.session_key!==session.session_key||
+          anchor?.row_id!==row.id||!call||call.reply!==current||call.name!==record.tool||anchor.tool!==record.tool||
+          !isDeepStrictEqual(call.request,record.arguments)||!Array.isArray(record.events))throw Error('Native operation receipt does not match its persisted tool call.');
+        for(const saved of record.events){
+          const section=sectionFor.get(saved.tool);
+          if(saved.tool!==record.tool||!section||!['reading','complete','failed'].includes(saved.state))throw Error('Native operation event is inconsistent.');
+          const event={...saved,tool_call_id:anchor.tool_call_id,native_receipt_id:record.receipt_id};
+          if(['complete','failed'].includes(saved.state))call.receiptTerminal=true;
+          current.native_tools??={events:[]};current.native_tools.events.push(event);
+          current[section]??={events:[]};current[section].events.push(event);
+        }
+      }
       // Only a native final assistant message proves that a reply finished.
       if(row.finish_reason==='stop'&&!row.tool_calls?.length){current.state='complete';current.finished_at=stamp(row.timestamp);}
       else if(['length','content_filter','error'].includes(row.finish_reason)){current.state='failed';current.error=`Native reply ended with ${row.finish_reason}.`;}
     }else if(row.role==='tool'){
       const call=calls.get(row.tool_call_id),name=call?.name??row.tool_name,current=call?.reply??ensureReply(row),section=sectionFor.get(name);
       const body=textContent(row.content),value=parse(body),failed=Boolean(value?.error)||value?.is_error===true;
+      // The receipt contains the original handler's pre-dispatch/generated ID
+      // and final event. Do not replace it with a reconstructed duplicate.
+      if(call?.receiptTerminal)continue;
       const event={tool:name??'native_tool',tool_call_id:row.tool_call_id,state:failed?'failed':'complete',at:new Date(stamp(row.timestamp)).toISOString(),request:call?.request??null,result:value??{raw_text:body},...(failed?{error:typeof value.error==='string'?value.error:'Native tool reported an error.'}:{})};
+      if(section==='recovery')event.action_id=value?.action_id??value?.id??null;
       if(section==='inspection')Object.assign(event,{operation:name,kind:name==='inspect_server'?'live':'records',worker_id:call?.request?.worker_id??value?.worker_id,...(call?.request?.selected_default!==undefined?{selected_default:call.request.selected_default}:{}),...(value?.diagnostic?{diagnostic:value.diagnostic}:{})});
       if(section==='research')Object.assign(event,{kind:name==='stargate_web_search'?'search':'read',...(name==='stargate_web_search'?{query:call?.request?.query,sources:Array.isArray(value?.results)?value.results:[]}:{sources:typeof value?.url==='string'?[{url:value.url}]:[],content_sha256:value?.content_sha256,truncated:value?.truncated})});
       current.native_tools??={events:[]};current.native_tools.events.push(event);

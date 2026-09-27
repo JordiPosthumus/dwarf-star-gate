@@ -6,6 +6,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {PairPreparationWatch} from './recovery-pair-watch.mjs';
 import {GenieChat} from './genie-chat.mjs';
+import {projectNativeConversation} from './genie-native-chat.mjs';
 
 const prepare=(row,state='complete')=>({tool:'prepare_pair_recovery',state,at:new Date().toISOString(),action_id:row.action_id,request:{worker_id:row.worker_id}});
 const observation=rows=>({tool:'recovery_status',state:'complete',at:new Date().toISOString(),result:{pair_preparations:structuredClone(rows)}});
@@ -45,6 +46,20 @@ test('newer capture supersedes historical failed capture; retained reading handl
   f.conversation.messages.unshift({role:'assistant',recovery:{events:[prepare(old)]}});f.rows.push(old);
   f.conversation.messages[1].recovery.events[0].state='reading';await f.watch().tick();
   assert.equal(f.calls.length,1);assert.ok(!f.calls[0][1].includes(old.action_id));assert.ok(f.calls[0][1].includes(f.rows[0].action_id));
+});
+test('native persisted pre-dispatch receipt follows its original action after a missing tool response',async t=>{
+  const f=fixture(t),row=f.rows[0],session_key='agent:main:stargate:fixture';
+  const projected=projectNativeConversation({id:f.conversation.id,session:{state:'observed',session_key,session_id:'native',busy:false,queued:0,pending_inputs:[]},messages:[
+    {id:1,role:'user',content:'Inspect this enrolled pair.',timestamp:100},
+    {id:2,role:'assistant',content:'',timestamp:101,tool_calls:[{id:'native-call',function:{name:'prepare_pair_recovery',arguments:JSON.stringify({worker_id:row.worker_id})}}],
+      dsg_operations:[{schema:1,receipt_id:'a'.repeat(64),scope:{session_key},native_call:{row_id:2,tool_call_id:'native-call',tool:'prepare_pair_recovery'},
+        tool:'prepare_pair_recovery',arguments:{worker_id:row.worker_id},events:[prepare(row,'reading')]}]}]});
+  f.conversation.messages=projected.messages;
+  f.options.chat.refresh=async()=>{};
+  f.options.chat.status=()=>({available:true,mode:'native',native_observation_available:true,conversations:[{id:f.conversation.id,observation_available:true,busy:false,queued:0,pending_input_count:0}]});
+  await f.watch().tick();assert.equal(f.calls.length,0,'An outstanding action is not completion');
+  f.finish();await f.watch().tick();assert.equal(f.calls.length,1);assert.ok(f.calls[0][1].includes(row.action_id));
+  await f.watch().tick();assert.equal(f.calls.length,1,'Reload follows the original action once without restarting it');
 });
 test('capability, active work, owner stop, queue pause and changes during inspection prevent wakeup',async t=>{
   const f=fixture(t);f.finish();f.enabled(false);await f.watch().tick();f.enabled(true);f.busy(true);await f.watch().tick();f.busy(false);

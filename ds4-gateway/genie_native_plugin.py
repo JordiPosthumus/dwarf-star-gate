@@ -21,6 +21,8 @@ SECTIONS = {
     'spark_setup': ('spark_setup', False), 'media': ('media', False),
     'power': ('fleet_power', False), 'admission': ('server_changes', False),
 }
+RECOVERY_OPERATIONS = frozenset({'recover_server', 'prepare_pair_recovery', 'enroll_pair_recovery',
+                                'qualify_pair_recovery', 'qualify_omlx_recovery', 'enroll_omlx_recovery'})
 
 
 class ToolCatalogue:
@@ -94,12 +96,14 @@ def register(ctx):
     if ctx.get_config('enable_ui_bridge', False) is True:
         from genie_native_sessions import register_native_sessions
         register_native_sessions(ctx)
-    # Native Hermes records tool calls/results itself. Do not create a second
-    # transport, conversation store, message queue or competing tool-event log.
+    # Hermes owns tool-call history. Recovery handlers also generate operation
+    # IDs before dispatch; retain those domain receipts before the side effect.
     emit = lambda *_args, **_kwargs: None
     initial = bridge_snapshot(descriptor)
     names = catalogue(initial, emit)
     from genie_native_policy import NativeRequestPolicy
+    from genie_native_receipts import NativeOperationReceipts, native_scope, native_call_anchor
+    receipts = NativeOperationReceipts(ctx.state.data_dir / 'operation-receipts')
     policy = NativeRequestPolicy(ctx.state.data_dir / 'ui-requests')
     ctx.register_hook('pre_llm_call', policy.pre_llm)
     ctx.register_hook('pre_tool_call', policy.pre_tool)
@@ -114,6 +118,21 @@ def register(ctx):
         schema={'name': 'stargate_status', 'description': 'Read current DSG fleet, service-to-machine mapping, capability switches and recovery evidence. Historical messages are not current health. Use before fleet decisions.',
                 'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False}},
         handler=current_status)
+
+    def operation_status(args, session_id=None, **_kwargs):
+        try:
+            scope = native_scope(session_id)
+            if not isinstance(args, dict) or set(args) - {'receipt_id'}:
+                raise ValueError('Select an existing receipt or read this conversation')
+            return json.dumps({'receipts': receipts.for_session(scope['session_key'], args.get('receipt_id')),
+                               'scope': 'Saved native recovery dispatch receipts for this conversation. Returned is a tool response, not recovery completion. Reconcile original action IDs through recovery_status; never replay uncertain dispatch.'})
+        except Exception:
+            return json.dumps({'error': 'Native operation receipts unavailable for this exact conversation. No operation was issued.'})
+
+    ctx.register_tool(name='stargate_operation_status', toolset='stargate_native',
+        schema={'name': 'stargate_operation_status', 'description': 'Read saved recovery operation IDs and dispatch receipts for this native conversation, including interrupted or uncertain calls. Use the original action IDs with recovery_status; returned tool calls are not fleet completion. Does not execute or retry operations.',
+                'parameters': {'type': 'object', 'properties': {'receipt_id': {'type': 'string'}}, 'additionalProperties': False}},
+        handler=operation_status)
 
     def invoke(name, args, session_id=None):
         try:
@@ -130,6 +149,11 @@ def register(ctx):
             tools = catalogue(current, emit)
             if name not in tools or tools[name]['section'] not in current.get('enabled_sections', []):
                 return json.dumps({'error': 'This DSG capability is currently unavailable. No action was issued.'})
+            if name in RECOVERY_OPERATIONS:
+                scope = native_scope(session_id)
+                return receipts.execute(scope, name, args,
+                    lambda receipt_emit: catalogue(current, receipt_emit)[name]['handler'](args),
+                    anchor=native_call_anchor(scope, name, args))
             return tools[name]['handler'](args)
         except Exception:
             return json.dumps({'error': 'DSG tool invocation could not be confirmed. Inspect the existing action identity; do not replay a mutation.'})

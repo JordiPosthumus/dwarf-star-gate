@@ -136,7 +136,7 @@ class NativeConversationCatalog:
         return row
 
 
-def native_display_page(db, session_id, offset, limit, revision=None, *, request_metadata=None):
+def native_display_page(db, session_id, offset, limit, revision=None, *, request_metadata=None, operation_records=None):
     """Project Hermes's canonical display lineage, never its compressed model context.
 
     get_resume_conversations reads one native snapshot and preserves archived
@@ -151,6 +151,10 @@ def native_display_page(db, session_id, offset, limit, revision=None, *, request
     keys = ('role', 'content', 'tool_call_id', 'tool_calls', 'tool_name', 'timestamp', 'finish_reason', 'display_kind')
     rows = [{'id': row['_row_id'], **{key: row[key] for key in keys if key in row}} for row in display]
     for row, original in zip(rows, display):
+        operations = [record for record in operation_records or []
+                      if (record.get('native_call') or {}).get('row_id') == row['id']]
+        if operations:
+            row['dsg_operations'] = operations
         if original.get('display_kind') == 'dsg_legacy':
             legacy = (original.get('display_metadata') or {}).get('dsg_legacy')
             if not isinstance(legacy, dict) or legacy.get('schema') != 1:
@@ -303,6 +307,8 @@ def register_native_sessions(ctx):
         def __init__(self, config):
             super().__init__(config, Platform('stargate_control'))
             from genie_native_queue import NativeTurnIdentities
+            from genie_native_receipts import NativeOperationReceipts
+            self.operations = NativeOperationReceipts(ctx.state.data_dir / 'operation-receipts')
             self.turn_identities = NativeTurnIdentities()
             self.requests = NativeSessionRequests(ctx.state.data_dir / 'ui-requests',
                                                   config.extra.get('allowed_session_keys', []), ctx.inject_message)
@@ -392,7 +398,8 @@ def register_native_sessions(ctx):
                 return {'state': 'unavailable', 'session_key': key}
             page = await asyncio.to_thread(native_display_page, db, before['session_id'],
                                           payload['offset'], payload['limit'], payload['revision'],
-                                          request_metadata=lambda content: self.requests.transcript_metadata(key, content))
+                                          request_metadata=lambda content: self.requests.transcript_metadata(key, content),
+                                          operation_records=self.operations.for_session(key))
             after = await self.observe_session({'action': 'session', 'session_key': key})
             if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
                 raise ValueError('Native session changed during observation; read it again')
@@ -420,7 +427,8 @@ def register_native_sessions(ctx):
                     # migrated metadata and request receipts. No mtime shortcut,
                     # message-count heuristic or compressed-context substitute.
                     page = await asyncio.to_thread(native_display_page, db, before['session_id'], 0, 1,
-                                                   request_metadata=lambda content: self.requests.transcript_metadata(key, content))
+                                                   request_metadata=lambda content: self.requests.transcript_metadata(key, content),
+                                                   operation_records=self.operations.for_session(key))
                     after = await self.observe_session({'action': 'session', 'session_key': key})
                     if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
                         raise ValueError('Native session changed during observation')

@@ -603,6 +603,17 @@ All watcher journals flush their file and directory before dispatch. Dated
 capability activity remains derived from actual tool receipts. This staged
 path still needs Stop-history correlation and live profile/channel cutover.
 
+Native recovery calls save their original generated action IDs before dispatch
+in private, atomic operation receipts. Each receipt is bound to the actual
+Hermes session, turn, tool-call ID, arguments and persisted assistant row. This
+is operation evidence; Hermes remains the conversation store. If dispatch or
+the final response is uncertain, the same invocation is never automatically
+reissued. `stargate_operation_status` reads saved receipts for the current
+conversation, including interrupted calls. Use their original IDs with
+`recovery_status` to inspect actual fleet outcomes: a returned tool response
+does not establish completed recovery. Dashboard history and follow-up watchers
+retain the same pre-dispatch IDs after reload and display-history compaction.
+
 Native dispatch receipts retain both the caller's original request identifier
 and the derived native dispatch UUID. Dashboard history exposes the original
 identifier only when the saved receipt matches the session and exact injected
