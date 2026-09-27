@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -36,6 +37,7 @@ class NativeSessions(unittest.TestCase):
                 self.requests.dispatch(self.payload)
         restarted = NativeSessionRequests(self.directory, ['owner-session'], self.inject)
         self.assertEqual(restarted.dispatch(self.payload)['state'], 'dispatching')
+        self.assertEqual(restarted.dispatch(self.payload)['message'], self.payload['message'])
         self.assertEqual(self.inject.call_count, 1)
 
     def test_rejects_other_sessions_changed_instructions_and_extra_fields(self):
@@ -65,7 +67,7 @@ class NativeSessions(unittest.TestCase):
         self.requests.dispatch(self.payload)
         file = self.directory / (self.payload['request_id'] + '.json')
         self.assertEqual(file.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn(self.payload['message'], file.read_text())
+        self.assertEqual(json.loads(file.read_text())['message'], self.payload['message'])
         self.directory.chmod(0o755)
         with self.assertRaises(ValueError):
             NativeSessionRequests(self.directory, ['owner-session'], self.inject)

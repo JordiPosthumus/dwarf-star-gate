@@ -96,6 +96,9 @@ Authenticated `POST /api/platforms/stargate_control/events` takes exactly
 Read its dispatch receipt with `action: status` and the same `request_id`.
 Identical retries return the saved receipt; a different instruction under the
 same UUID is rejected. Receipts survive restart in private plugin storage.
+They retain the original input so an uncertain dispatch can be reconciled without
+losing the owner's instruction. They are ingress receipts, not a second agent
+history, and must not be exposed beyond the authenticated owner surface.
 
 `accepted_unverified` means scheduled, **not delivered or completed**. Correlate
 `[DSG request <UUID>]` in the native transcript before reporting an outcome.
@@ -110,3 +113,33 @@ waits for the same port to become available before restarting. A production
 supervisor must account for that release delay and verify API readiness as well
 as Telegram readiness. The dashboard facade and production supervisor are not
 implemented by this adapter alone.
+
+## Reading native history
+
+`NativeHermesChatClient` in `ds4-gateway/genie-native-chat.mjs` reads messages from
+Hermes's authenticated transcript API and uses the control adapter's `session`
+observation to resolve the current routing entry. That observation reads the
+pinned native adapter's active and pending session maps, including its durable
+active-turn marker. Missing scheduler evidence is unavailable, never idle.
+
+The client takes explicit DSG conversation-to-native-session bindings and a
+private descriptor with `url` (loopback origin), `api_key`, and `control_token`.
+It rereads credentials for every request and rejects remote destinations or
+shared descriptor files. `read(id, {offset, limit})` returns a paginated
+projection of native user/assistant messages plus original tool results. It
+checks the routing entry before and after reading; a changed session invalidates
+the observation. A full page is not represented as complete history.
+
+Tool receipts retain their native operation state: a completed tool call that
+returned a running operation remains a running operation. Only a final native
+assistant record marks a reply complete. Reasoning text is not copied into the
+dashboard projection. The client never writes a native transcript and never
+uses the native API's separate agent execution route.
+
+`submit` maps existing dashboard/watcher request identities deterministically to
+the ingress UUID, preserving duplicate protection across retries and restarts.
+The full native fixture exercises the client against actual Hermes APIs,
+including busy-state observation and five visible replies after restart.
+This client is staged infrastructure: selecting it as the live dashboard chat
+backend, migrating historical conversations and preserving the other chat
+controls remain required before cutover.

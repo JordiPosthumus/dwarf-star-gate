@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import uuid
@@ -69,7 +70,8 @@ class NativeSessionRequests:
                 # replay a possibly executing fleet instruction.
                 return prior
             record = {'request_id': payload['request_id'], 'session_key': session,
-                      'fingerprint': fingerprint, 'state': 'dispatching',
+                      'fingerprint': fingerprint, 'message': message, 'state': 'dispatching',
+                      'created_at': datetime.now(timezone.utc).isoformat(),
                       'scope': 'Dispatch receipt only. Verify the matching native transcript before claiming completion. Uncertain dispatch must not be replayed.'}
             self._save(file, record)
             try:
@@ -107,9 +109,34 @@ def register_native_sessions(ctx):
 
         async def dispatch_http_event(self, payload):
             try:
+                if payload.get('action') == 'session':
+                    return await self.observe_session(payload)
                 return self.requests.dispatch(payload)
             except ValueError as error:
                 return {'state': 'rejected', 'error': str(error)}
+
+        async def observe_session(self, payload):
+            key = payload.get('session_key')
+            if set(payload) != {'action', 'session_key'} or not isinstance(key, str) or key not in self.requests.allowed:
+                raise ValueError('Use an explicitly connected native session')
+            runner = self.gateway_runner
+            if runner is None:
+                return {'state': 'unavailable', 'session_key': key}
+            entry = await runner.async_session_store.lookup_by_session_key(key)
+            if entry is None or entry.origin is None:
+                return {'state': 'missing', 'session_key': key}
+            # Read the pinned native adapter's scheduler; never create a session,
+            # mutate the routing index or infer idle from a persisted transcript.
+            adapter = runner._adapter_for_source(entry.origin)
+            active = getattr(adapter, '_active_sessions', None)
+            pending = getattr(adapter, '_pending_messages', None)
+            if not isinstance(active, dict) or not isinstance(pending, dict):
+                return {'state': 'unavailable', 'session_key': key}
+            return {'state': 'observed', 'session_key': key, 'session_id': entry.session_id,
+                    'busy': key in active or bool(entry.active_turn_token), 'queued': int(key in pending),
+                    'suspended': bool(entry.suspended), 'resume_pending': bool(entry.resume_pending),
+                    'platform': entry.origin.platform.value, 'user_id': entry.origin.user_id,
+                    'observed_at': datetime.now(timezone.utc).isoformat()}
 
         async def send(self, chat_id, content, reply_to=None, metadata=None):
             return SendResult(success=False, error='Replies belong to the existing native session adapter')
