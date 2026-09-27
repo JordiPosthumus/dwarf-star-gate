@@ -10,20 +10,21 @@ import {createDashboard} from './dashboard.mjs';
 const token='123456789:'+('test_only_').repeat(4);
 function message(id,text,{user=42,type='private',...extra}={}){return {update_id:id,message:{message_id:id,chat:{id:user,type},from:{id:user,first_name:'Owner',is_bot:false},text,...extra}};}
 function fixture(t,{answer=async()=>({text:'The actual saved Genie answer.'}),call:override}={}){
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-telegram-'));let generations=0;const sent=[];
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-telegram-'));let generations=0;const sent=[],actions=[];
   const chat=new GenieChat({directory:path.join(directory,'chat'),provider:{info:{mode:'fixture'},async generate(input){generations++;return answer(input);},close(){}}});
   const call=async(_token,method,body)=>{
     if(override)return override(method,body);
     if(method==='getMe')return {id:123456789,is_bot:true,username:'fixture_genie_bot'};
     if(method==='getWebhookInfo')return {url:''};
     if(method==='getUpdates')return [];
+    if(method==='sendChatAction'){actions.push(body);return true;}
     if(method==='sendMessage'){sent.push(body);return {message_id:sent.length,chat:{id:body.chat_id}};}
     throw Error('Unexpected API method');
   };
   const options={directory:path.join(directory,'telegram'),chat,call,snapshot:()=>({gateway:{workers:[{is_healthy:true,drained:false}],active:1}})};
   const bridge=new GenieTelegram(options);
   t.after(()=>{bridge.close();chat.close();fs.rmSync(directory,{recursive:true,force:true});});
-  return {directory,chat,bridge,options,sent,generations:()=>generations};
+  return {directory,chat,bridge,options,sent,actions,generations:()=>generations};
 }
 async function pair(f){await f.bridge.configure({bot_token:token});const code=new URL(f.bridge.status().pairing_url).searchParams.get('start');await f.bridge.accept(message(1,'/start '+code));await f.bridge.flush();}
 
@@ -117,4 +118,51 @@ test('local setup HTTP endpoint requires same-origin CSRF, rejects unknown field
   const connected=await post({action:'connect',bot_token:token},headers);assert.equal(connected.status,200);assert.ok(!(await connected.text()).includes(token));
   const html=await(await fetch(base)).text();assert.match(html,/id="telegram-token" type="password"/);assert.match(html,/\/genie-telegram.js/);
   const script=await(await fetch(base+'/genie-telegram.js')).text();assert.doesNotMatch(script,/localStorage|sessionStorage|innerHTML/);
+});
+
+test('typing refreshes for a pending reply, stops on completion, and never replays work',async t=>{
+ let finish;const f=fixture(t,{answer:()=>new Promise(resolve=>finish=resolve)});let now=100000;f.bridge.now=()=>now;
+ await pair(f);await f.bridge.typing();assert.equal(f.actions.length,0);
+ await f.bridge.accept(message(2,'Please inspect the fleet.'));await f.bridge.flush();
+ const saved=fs.readFileSync(f.bridge.file,'utf8');
+ await f.bridge.typing();assert.deepEqual(f.actions,[{chat_id:42,action:'typing'}]);
+ now+=3000;await f.bridge.typing();assert.equal(f.actions.length,1);
+ now+=1500;await f.bridge.typing();assert.equal(f.actions.length,2);
+ assert.equal(fs.readFileSync(f.bridge.file,'utf8'),saved,'ephemeral typing does not alter durable delivery receipts');
+ assert.equal(f.bridge.status().typing.last_sent_at,now);assert.equal(f.generations(),1);
+ finish({text:'Verified result.'});await f.chat.idle();now+=5000;await f.bridge.typing();assert.equal(f.actions.length,2);
+ await f.bridge.flush();assert.equal(f.sent.at(-1).text,'Verified result.');assert.equal(f.generations(),1);
+});
+
+test('typing failure honors backoff without affecting the actual answer',async t=>{
+ let finish;const f=fixture(t,{answer:()=>new Promise(resolve=>finish=resolve)});await pair(f);
+ let now=100000,calls=0;f.bridge.now=()=>now;const original=f.bridge.call;
+ f.bridge.call=async(token,method,body,options)=>{if(method==='sendChatAction'){calls++;throw Object.assign(Error('rate limit'),{retry_after:30});}return original(token,method,body,options);};
+ await f.bridge.accept(message(2,'One question.'));await f.bridge.flush();await f.bridge.typing();
+ now+=29000;await f.bridge.typing();assert.equal(calls,1);assert.equal(f.bridge.status().error,null);
+ assert.match(f.bridge.status().typing.error,/unaffected/);
+ finish({text:'Answer still delivered.'});await f.chat.idle();await f.bridge.flush();
+ assert.equal(f.sent.at(-1).text,'Answer still delivered.');assert.equal(f.bridge.status().uncertain_deliveries,0);
+});
+
+test('typing is scoped to the paired conversation and cannot continue after disconnect',async t=>{
+ let finish;const f=fixture(t,{answer:()=>new Promise(resolve=>finish=resolve)});await pair(f);
+ const other=f.chat.create({title:'Unrelated conversation'});f.chat.submit(other.id,'Unrelated request.','unrelated-typing-request');
+ await f.bridge.typing();assert.equal(f.actions.length,0);
+ f.bridge.selectConversation(other.id); // Past messages are excluded by the subscription cursor.
+ await f.bridge.typing();assert.equal(f.actions.length,0);
+ finish({text:'Old result.'});await f.chat.idle();
+ f.chat.submit(other.id,'New selected request.','selected-typing-request');
+ let acknowledge;const original=f.bridge.call;
+ f.bridge.call=async(token,method,body,options)=>method==='sendChatAction'?new Promise(resolve=>acknowledge=resolve):original(token,method,body,options);
+ const sending=f.bridge.typing();await f.bridge.typing();assert.ok(f.bridge.typingBusy);
+ f.bridge.disconnect();acknowledge(true);await sending;assert.equal(f.bridge.status().typing.last_sent_at,null);
+ await f.bridge.typing();assert.equal(f.actions.length,0);
+ finish({text:'New result.'});await f.chat.idle();
+});
+
+test('Telegram typing API uses the fixed action endpoint without transmitting question text',async t=>{
+ const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);
+ globalThis.fetch=async(url,options)=>{assert.ok(url.endsWith('/sendChatAction'));assert.equal(options.redirect,'error');assert.deepEqual(JSON.parse(options.body),{chat_id:42,action:'typing'});return {ok:true,json:async()=>({ok:true,result:true})};};
+ assert.equal(await telegramAPI(token,'sendChatAction',{chat_id:42,action:'typing'}),true);
 });
