@@ -25,6 +25,40 @@ def valid_source_window(window):
             and type(window['offset']) is int and window['offset']>=0
             and type(window['length']) is int and 1<=window['length']<=16000)
 
+def vllm_process_snapshot(proc_root='/proc'):
+    """Locate one live API process, without executing its command or reading env."""
+    import pathlib, re
+    root=pathlib.Path(proc_root)
+    pids=sorted((p for p in root.iterdir() if p.name.isdigit()),key=lambda p:int(p.name))
+    if len(pids)>4096:return {'status':'unavailable','reason':'process_inventory_too_large'}
+    matches=[];uncertain=False
+    def bounded(file):
+        with file.open('rb') as stream:raw=stream.read(65537)
+        if len(raw)>65536:raise ValueError('Process metadata too large')
+        return raw
+    def started(p):return bounded(p/'stat').decode().rsplit(')',1)[1].split()[19]
+    for p in pids:
+        try:
+            before=started(p);raw=bounded(p/'cmdline')
+            argv=[v.decode() for v in raw.rstrip(b'\0').split(b'\0')] if raw else []
+            if not argv:continue
+            exe=pathlib.PurePosixPath(argv[0]).name;args=None
+            if exe=='vllm' and argv[1:2]==['serve']:args=argv[2:]
+            elif re.fullmatch(r'python(?:[0-9]+(?:\.[0-9]+)*)?',exe):
+                if len(argv)>2 and pathlib.PurePosixPath(argv[1]).name=='vllm' and argv[2]=='serve':args=argv[3:]
+                elif argv[1:3]==['-m','vllm.entrypoints.openai.api_server']:args=argv[3:]
+                elif argv[1:4]==['-m','vllm.entrypoints.cli.main','serve']:args=argv[4:]
+            if args is None:continue
+            if not args or not before.isdigit() or started(p)!=before or bounded(p/'cmdline')!=raw:
+                uncertain=True;continue
+            matches.append({'pid':int(p.name),'start_ticks':int(before),'config':{'Entrypoint':['vllm','serve'],'Cmd':args}})
+        except (OSError,ValueError,IndexError,UnicodeError):uncertain=True
+    if uncertain:return {'status':'unavailable','reason':'process_inventory_changed_or_unreadable'}
+    if len(matches)!=1:return {'status':'unavailable','reason':'ambiguous_vllm_process' if matches else 'vllm_process_not_identified'}
+    return {'status':'observed',**matches[0],'scope':'Argument vector and process start ticks read twice inside this container. No model code executed and no process environment read. Arguments are launch observations, not proof of effective request defaults or capacity.'}
+
+PROCESS_QUERY=inspect.getsource(vllm_process_snapshot)+'\nimport json\nprint(json.dumps(vllm_process_snapshot()))\n'
+
 # Executed as a fixed reader, never as model-supplied code. find_spec on the
 # top-level package locates it without importing vLLM or initializing CUDA.
 SOURCE_QUERY = r'''
@@ -233,7 +267,7 @@ def peer_parameters(target):
     return {'destination':user+'@'+host,'port':int(port),'machine_sha256':fingerprint,'known_hosts':known_host+' '+' '.join(key)+'\n'}
 
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = inspect.getsource(inspect_image_transfers)+'\n'+inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
+COLLECTOR = inspect.getsource(inspect_image_transfers)+'\n'+inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\nPROCESS_QUERY = '+repr(PROCESS_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -288,17 +322,33 @@ if c['State']['Running']:
   else:packages={'status':'queried','method':'importlib.metadata in inspected container; frameworks not imported','values':queried}
  except Exception:
   packages={'status':'unavailable','reason':'package_query_failed'}
+launch=config
+process_observation=None
+if c['State']['Running'] and config.get('Entrypoint') and pathlib.PurePosixPath(config['Entrypoint'][0]).name in ['bash','sh','dash']:
+ process_observation={'status':'unavailable','reason':'process_query_failed'}
+ try:
+  if c['HostConfig'].get('PidMode'):process_observation={'status':'unavailable','reason':'shared_process_namespace'}
+  else:process_observation=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',PROCESS_QUERY))
+  if process_observation.get('status')=='observed':
+   # Do not copy credentials from the observed API command into the argv of
+   # subsequent metadata readers. Secret flags may take multiple values.
+   safe=[];hide=False
+   for arg in process_observation['config']['Cmd']:
+    if arg.startswith('--'):hide=bool(secret.search(arg.split('=',1)[0]))
+    safe.append('<redacted>' if hide and not (arg.startswith('--') and '=' not in arg) else arg)
+   launch={'Entrypoint':['vllm','serve'],'Cmd':safe}
+ except Exception:pass
 model_config={'status':'unavailable','reason':'unsupported_launch_form'}
-if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
+if launch.get('Entrypoint') in [['vllm','serve'],['vllm']]:
  model_config={'status':'unavailable','reason':'container_not_running'}
  if c['State']['Running']:
   try:
-   model_config=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',MODEL_CONFIG_QUERY,json.dumps({'Cmd':config.get('Cmd'),'Entrypoint':config.get('Entrypoint')})))
+   model_config=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',MODEL_CONFIG_QUERY,json.dumps({'Cmd':launch.get('Cmd'),'Entrypoint':launch.get('Entrypoint')})))
    check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
    if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
   except Exception:model_config={'status':'unavailable','reason':'model_config_read_failed'}
 engine_runtime={'status':'unavailable','reason':'unsupported_launch_form'}
-if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
+if launch.get('Entrypoint') in [['vllm','serve'],['vllm']]:
  engine_runtime={'status':'unavailable','reason':'container_not_running'}
  if c['State']['Running']:
   engine_runtime={'status':'queried','device_and_package':{'status':'unavailable','reason':'runtime_query_failed'},'gdn_prefill_log':{'status':'unavailable','reason':'log_read_failed'}}
@@ -306,7 +356,7 @@ if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
   except Exception:pass
   engine_runtime['cache_capacity']={'state':'unavailable','reason':'metrics_query_failed'}
   try:
-   engine_runtime['cache_capacity']=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',CACHE_QUERY,json.dumps(config.get('Cmd') or [])))
+   engine_runtime['cache_capacity']=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',CACHE_QUERY,json.dumps(launch.get('Cmd') or [])))
    engine_runtime['cache_capacity']['container_started_at']=c['State']['StartedAt']
   except Exception:pass
   try:
@@ -329,6 +379,20 @@ if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
    check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
    if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
   except Exception:engine_runtime={'status':'unavailable','reason':'container_identity_unverified_after_query'}
+if process_observation is not None:
+ if process_observation.get('status')=='observed':
+  try:
+   after=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',PROCESS_QUERY))
+   check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
+   if after!=process_observation or not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Process changed')
+   # Keep the original Docker entrypoint in container.command. The separate
+   # native process observation is redacted before leaving this collector.
+   process_observation={**process_observation,'config':launch}
+  except Exception:
+   process_observation={'status':'unavailable','reason':'vllm_process_changed_during_query'}
+   model_config={'status':'unavailable','reason':'vllm_process_changed_during_query'}
+   engine_runtime={'status':'unavailable','reason':'vllm_process_changed_during_query'}
+ engine_runtime['launch_process']=process_observation
 sources=None
 if p.get('source_files'):
  sources={'status':'unavailable','reason':'container_not_running'}
@@ -592,7 +656,7 @@ def register_inspection(config, context, emit):
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
             properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
             properties['source_window']={'type':'object','properties':{'offset':{'type':'integer','minimum':0},'length':{'type':'integer','minimum':1,'maximum':16000}},'required':['offset','length'],'additionalProperties':False,'description':'Use with ONE source_files path. Recommended for source inspection: start with offset 0, length 4000, then follow next_offset. Returns a text section with full-file hash/size; existing full reads remain available without this option. Large full results may spill to a Hermes cache this profile cannot read; use source_window instead.'}
-            description='For supported running vLLM containers, engine_runtime reports NVIDIA device capability, installed FlashInfer metadata and structured current-start GDN prefill selection logs; unavailable evidence remains explicit. These are observations, not performance proof. model_config includes allowlisted architecture/dimension fields read from the launch model config.json, or an explicit unavailable reason. This is on-disk configuration, not active kernel evidence. '+description
+            description='For supported running vLLM containers, engine_runtime reports NVIDIA device capability, installed FlashInfer metadata and structured current-start GDN prefill selection logs; unavailable evidence remains explicit. Shell-wrapped containers may also report launch_process: one native API process, with redacted arguments and process/container start identities rechecked around inspection. Ambiguous, changed, unreadable or shared process namespaces remain unavailable. These are observations, not performance proof. model_config includes allowlisted architecture/dimension fields read from the launch model config.json, or an explicit unavailable reason. This is on-disk configuration, not active kernel evidence. '+description
             description+=' To evaluate an upstream patch, request its relevant source_files and compare actual contents; a build date alone cannot prove a patch absent. Keep private source contents out of web queries.'
         if kind=='artifact':
             properties.update({'artifact':{'type':'string','enum':ARTIFACTS},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'},'reference_chain':{'type':'array','items':{'type':'string'},'maxItems':8,'description':'Optional JSON pointers to existing path/sha256 objects. Each pointer selects a reference in the preceding document. With artifact set, start there (e.g. ["/validation_reference"]); without artifact, start at the worker record (e.g. ["/evidence/0"]). Every linked JSON file must match its hash and stay in this library. Escape ~ as ~0 and / as ~1 inside pointer keys.'}})

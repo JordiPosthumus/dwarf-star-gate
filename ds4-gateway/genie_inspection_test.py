@@ -229,18 +229,26 @@ class ModelConfiguration(unittest.TestCase):
  def test_preserves_bad_files_and_rejects_symlink(self):
   self.file.write_text('invalid-json');self.assertNotEqual(self.query().returncode,0);self.assertEqual(self.file.read_text(),'invalid-json')
   self.file.unlink();self.file.symlink_to(self.root/'must_not_import.py');self.assertNotEqual(self.query().returncode,0);self.assertTrue(self.file.is_symlink())
- def collect(self,changed=False,failed=False,runtime_failed=False,logs='selection',cache_failed=False):
+ def collect(self,changed=False,failed=False,runtime_failed=False,logs='selection',cache_failed=False,wrapped=False,process_changed=False,ambiguous=False,pid_mode=''):
   import io,contextlib,copy,subprocess
   c={'Id':'exact-container-id','Image':'image-id','State':{'Running':True,'StartedAt':'2026-01-01T00:00:00Z'},'Config':{'Cmd':[str(self.root)],'Entrypoint':['vllm','serve'],'Env':[]},'Mounts':[],'HostConfig':{}}
-  model_read=False;calls=[]
+  process_args=[str(self.root),'--port','8888','--max-model-len','400000','--max-num-seqs','2','--api-key','PRIVATE_API','PRIVATE_SECOND']
+  safe_args=[str(self.root),'--port','8888','--max-model-len','400000','--max-num-seqs','2','--api-key','<redacted>','<redacted>']
+  if wrapped:c['Config'].update(Entrypoint=['bash'],Cmd=['/start.sh'])
+  c['HostConfig']['PidMode']=pid_mode
+  model_read=False;calls=[];process_reads=0
   def run(argv,**kwargs):
-   nonlocal model_read
+   nonlocal model_read,process_reads
    calls.append(argv)
    if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated'}])
    if argv[:2]==('docker','exec'):
     self.assertEqual(argv[2:6],('exact-container-id','python3','-B','-c'))
+    if argv[6]==m.PROCESS_QUERY:
+     process_reads+=1
+     if ambiguous:return json.dumps({'status':'unavailable','reason':'ambiguous_vllm_process'})
+     return json.dumps({'status':'observed','pid':9,'start_ticks':100+(1 if process_changed and process_reads>1 else 0),'config':{'Entrypoint':['vllm','serve'],'Cmd':process_args},'scope':'fixture process observation'})
     if argv[6]==m.CACHE_QUERY:
-     self.assertEqual(json.loads(argv[7]),[str(self.root)])
+     self.assertEqual(json.loads(argv[7]),safe_args if wrapped else [str(self.root)])
      if cache_failed:raise subprocess.TimeoutExpired(argv,20)
      return json.dumps({'state':'observed','kv_cache_size_tokens':500123})
     if argv[6]==m.RUNTIME_QUERY:
@@ -248,6 +256,7 @@ class ModelConfiguration(unittest.TestCase):
      return json.dumps({'gpus':{'status':'observed','devices':[{'name':'Example GPU','compute_capability':'12.1','driver_version':'580.1'}]},'flashinfer':{'status':'installed','version':'0.6.18'}})
     if argv[6]==m.MODEL_CONFIG_QUERY:
      model_read=True
+     self.assertNotIn('PRIVATE_',argv[7])
      if failed:raise subprocess.TimeoutExpired(argv,20)
      r=self.query();self.assertEqual(r.returncode,0);return r.stdout
     return json.dumps({k:{'status':'not_found'} for k in ['vllm','torch','transformers']})
@@ -279,6 +288,51 @@ class ModelConfiguration(unittest.TestCase):
   result,_=self.collect();cache=result['engine_runtime']['cache_capacity']
   self.assertEqual(cache['kv_cache_size_tokens'],500123);self.assertEqual(cache['container_started_at'],'2026-01-01T00:00:00Z')
   result,_=self.collect(cache_failed=True);self.assertEqual(result['engine_runtime']['cache_capacity']['state'],'unavailable');self.assertEqual(result['model_config']['status'],'read')
+ def test_wrapped_vllm_uses_live_process_port_model_and_redacts_all_secret_values(self):
+  result,calls=self.collect(wrapped=True)
+  self.assertEqual(result['container']['entrypoint'],['bash']);self.assertEqual(result['container']['command'],['/start.sh'])
+  launch=result['engine_runtime']['launch_process'];self.assertEqual(launch['pid'],9);self.assertEqual(launch['start_ticks'],100)
+  self.assertEqual(launch['config']['Cmd'][-2:],['<redacted>','<redacted>'])
+  self.assertEqual(result['model_config']['status'],'read');self.assertEqual(result['engine_runtime']['cache_capacity']['kv_cache_size_tokens'],500123)
+  self.assertEqual(sum(c[1]=='exec' and c[6]==m.PROCESS_QUERY for c in calls),2)
+  self.assertNotIn('PRIVATE_',json.dumps(result))
+ def test_process_replacement_invalidates_runtime_and_model_observations(self):
+  result,_=self.collect(wrapped=True,process_changed=True)
+  self.assertEqual(result['engine_runtime']['status'],'unavailable');self.assertEqual(result['engine_runtime']['launch_process']['reason'],'vllm_process_changed_during_query')
+  self.assertEqual(result['model_config']['status'],'unavailable');self.assertNotIn('PRIVATE_',json.dumps(result))
+ def test_ambiguous_process_or_shared_namespace_never_queries_a_guessed_engine(self):
+  for options in [{'ambiguous':True},{'pid_mode':'host'},{'pid_mode':'container:other'}]:
+   result,calls=self.collect(wrapped=True,**options)
+   self.assertEqual(result['engine_runtime']['launch_process']['status'],'unavailable')
+   self.assertFalse(any(c[1]=='exec' and c[6] in [m.MODEL_CONFIG_QUERY,m.CACHE_QUERY,m.RUNTIME_QUERY] for c in calls))
+   if options.get('pid_mode'):self.assertFalse(any(c[1]=='exec' and c[6]==m.PROCESS_QUERY for c in calls))
+
+class WrappedProcessReader(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=pathlib.Path(self.tmp.name)
+ def process(self,pid,args,start=123):
+  p=self.root/str(pid);p.mkdir(exist_ok=True)
+  (p/'stat').write_text(str(pid)+' (api process) '+' '.join(['S']+['0']*18+[str(start)]+['0']*10))
+  (p/'cmdline').write_bytes(b'\0'.join(arg.encode() for arg in args)+b'\0')
+  (p/'environ').write_text('PRIVATE_ENV_MUST_NOT_BE_READ')
+ def test_supported_launchers_and_embedded_reader_preserve_arguments(self):
+  forms=[['/usr/local/bin/vllm','serve','/model'],['python3','/usr/local/bin/vllm','serve','/model'],['python3.12','-m','vllm.entrypoints.openai.api_server','--model','/model'],['python','-m','vllm.entrypoints.cli.main','serve','/model']]
+  for argv in forms:
+   self.process(9,argv+['--port','8888','--max-model-len','400000','--max-num-seqs','2'])
+   result=m.vllm_process_snapshot(str(self.root));self.assertEqual(result['status'],'observed');self.assertEqual(result['start_ticks'],123)
+   self.assertEqual(result['config']['Cmd'][-6:],['--port','8888','--max-model-len','400000','--max-num-seqs','2'])
+   self.assertNotIn('PRIVATE_ENV',json.dumps(result))
+  namespace={};exec(m.PROCESS_QUERY.split('\nimport json\n')[0],namespace)
+  self.assertEqual(namespace['vllm_process_snapshot'](str(self.root)),result)
+ def test_unrecognized_titles_and_python_code_are_not_parsed_as_commands(self):
+  self.process(2,['VLLM::EngineCore'])
+  self.process(3,['python3','-c','vllm serve /model --port 8888'])
+  self.assertEqual(m.vllm_process_snapshot(str(self.root))['reason'],'vllm_process_not_identified')
+ def test_multiple_api_processes_and_incomplete_inventory_stay_unknown(self):
+  self.process(2,['vllm','serve','/model']);self.process(3,['vllm','serve','/other'])
+  self.assertEqual(m.vllm_process_snapshot(str(self.root))['reason'],'ambiguous_vllm_process')
+  (self.root/'3'/'stat').unlink()
+  self.assertEqual(m.vllm_process_snapshot(str(self.root))['reason'],'process_inventory_changed_or_unreadable')
 
 class CacheMetricsQuery(unittest.TestCase):
  def setUp(self):
