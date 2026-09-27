@@ -154,4 +154,7 @@ test('dashboard reload protects background serving checks and accepts legacy mis
  const snapshot=url=>url.endsWith('/chat')?{conversations:[]}:url.endsWith('/power')?{members:[]}:{busy:false};
  await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/admission')?{busy:true}:snapshot(url))}),/serving checks/);
  await assertDashboardIdle({},{fetchImpl:async url=>url.endsWith('/admission')?new Response('',{status:404}):Response.json(snapshot(url))});
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/spark-access')?{busy:true}:snapshot(url))}),/Initial Spark access/);
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/spark-access')?{}:snapshot(url))}),/Initial Spark access/);
+ await assertDashboardIdle({},{fetchImpl:async url=>url.endsWith('/spark-access')?new Response('',{status:404}):Response.json(snapshot(url))});
 });

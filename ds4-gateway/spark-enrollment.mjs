@@ -34,7 +34,7 @@ export async function inspectNewSpark(ssh,{directory,knownHosts,strict=false,com
   const known=path.join(os.homedir(),'.ssh','known_hosts');
   if(!knownHosts&&!strict&&fs.existsSync(known)){const backup=path.join(directory,`known-hosts-before-${Date.now()}-${randomUUID()}`);fs.copyFileSync(known,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
   try{
-    const {stdout}=await command('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=10',...(knownHosts?['-o',`UserKnownHostsFile=${knownHosts}`,'-o','GlobalKnownHostsFile=/dev/null','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),'-o',`StrictHostKeyChecking=${knownHosts||strict?'yes':'accept-new'}`,'--',ssh,`python3 -I -B -c ${quote(probe)}`],{timeout:45000,maxBuffer:65536});
+    const {stdout}=await command('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=10',...(knownHosts?['-o',`UserKnownHostsFile=${knownHosts}`,'-o','GlobalKnownHostsFile=/dev/null','-o','KnownHostsCommand=none','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),'-o',`StrictHostKeyChecking=${knownHosts||strict?'yes':'accept-new'}`,'--',ssh,`python3 -I -B -c ${quote(probe)}`],{timeout:45000,maxBuffer:65536});
     const result=JSON.parse(stdout);
     if(typeof result.home!=='string'||!result.home.startsWith('/')||result.home.includes('\n')||result.home.split('/').includes('..'))throw Error('Invalid home directory');
     return result;

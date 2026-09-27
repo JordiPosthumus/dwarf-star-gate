@@ -172,6 +172,19 @@ test('SSH diagnostics separate access, transport, trust and probe uncertainty wi
   assert.equal(discoverySSHReason({discovery_reason:'secret details'}),'identity_probe_unavailable');
   assert.equal(discoverySSHReason({discovery_reason:'authentication_unavailable'}),'authentication_unavailable');
 });
+test('initial-access eligibility binds saved IDs and keys and excludes known inventory, IPv6 and transport failures',async t=>{
+  let aliases=['existing-spark'];
+  const addresses=[2,3,4,5].map(n=>({address:ip(192,168,9,n)}));addresses.push({address:'fe80::2%en5'});
+  const f=fixture(t,{aliases:async()=>aliases,sources:async()=>({addresses,issues:[]}),inspect:async ssh=>{
+    if(ssh==='existing-spark')return {...facts(),interfaces:[{ifname:'eth0',addr_info:[{local:ip(192,168,9,3)}]}]};
+    throw Object.assign(Error(),{stderr:ssh.endsWith('.5')?'No route to host':'Permission denied (publickey,password).'});
+  }});
+  await f.service.discover();await f.service.settled();const scan=f.service.status();
+  assert.deepEqual(scan.unverified.filter(e=>e.initial_access_available).map(e=>e.address),[ip(192,168,9,4)]);
+  const proof=await f.service.accessCandidates({scan_id:scan.scan_id});assert.equal(proof.endpoints.length,1);assert.equal(proof.endpoints[0].endpoint_id,scan.unverified.find(e=>e.initial_access_available).endpoint_id);
+  assert.deepEqual(proof.known_identities,[sparkIdentity(facts())]);assert.match(proof.known_hosts_sha256,/^[a-f0-9]{64}$/);
+  aliases.push('other');await assert.rejects(f.service.accessCandidates({scan_id:scan.scan_id}),/fresh discovery/);
+});
 test('setup tool exposes discovery with capability/testing gates and strict argument schemas',async t=>{
   const f=fixture(t);let enabled=false,testing=false;
   const tools=createSparkSetupTools({ui_worker_management:true,spark_setup:{enabled:true}},{discovery:f.service,isEnabled:()=>enabled,isTesting:()=>testing});

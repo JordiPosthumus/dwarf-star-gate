@@ -33,7 +33,7 @@ export function setupTransport(target,input){
   });
 }
 
-export function createSparkSetupTools(config,{isEnabled=()=>true,isDiscoveryEnabled=isEnabled,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null,enrollment=null,discovery=null}={}){
+export function createSparkSetupTools(config,{isEnabled=()=>true,isDiscoveryEnabled=isEnabled,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null,enrollment=null,discovery=null,access=null}={}){
   if(config.spark_setup?.enabled!==true)return null;
   if(config.ui_worker_management!==true)throw new Error('Spark setup requires local worker management.');
   const targets=enrollment?.targets??config.spark_setup.targets??{};
@@ -49,6 +49,19 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isDiscoveryEnab
   const read=async id=>{try{const result=await transport(targets[id],{action:'status'});const row={...result,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}catch(error){const row={state:'unavailable',error:error.message,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}};
   const pending=new Set();
   const endpoint=createToolEndpoint('/api/genie/spark-setup-tools','x-sg-spark-setup-tool',async input=>{
+    if(['request_access','bootstrap_access','access_status'].includes(input?.action)){
+      if(!access)throw Error('Initial Spark access is not connected.');
+      const {action,...details}=input,keys=Object.keys(details).sort().join(',');
+      if(action==='access_status'){
+        if(!['','access_id'].includes(keys))throw Error('Access status accepts only a saved access ID.');
+        return access.status(details);
+      }
+      if(!isEnabled())throw Error('New Spark setup is switched off.');
+      if(isTesting())throw Error('Initial access is paused in testing mode.');
+      if(action==='request_access')return access.request(details);
+      if(keys!=='access_id')throw Error('Bootstrap accepts only the saved access ID, never credentials or addresses.');
+      return access.begin(details);
+    }
     if(input?.action==='discover'||input?.action==='discovery_status'){
       if(!discovery)throw new Error('Spark network discovery is not connected.');
       const keys=Object.keys(input).sort().join(',');

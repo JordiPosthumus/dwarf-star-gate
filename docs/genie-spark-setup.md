@@ -13,7 +13,7 @@ Each scan retains its own receipt, including after later scans. When a requested
 scan finishes after Genie has answered, a durable observer returns to the
 originating conversation once to report that exact scan. It respects an owner
 stop, paused conversation, the Server inspection switch and testing mode. It
-does not rescan, enroll or authorize maintenance. An uncertain chat submission
+does not rescan or grant maintenance authority. For an original onboarding request, Genie may continue its already authorized access or enrollment steps after reading the result. A discovery-only request remains read-only. An uncertain chat submission
 reuses its saved request ID.
 
 Discovery currently probes SSH on bounded directly connected private IPv4
@@ -58,8 +58,40 @@ reported for inspection rather than overwritten. If enrollment loses observation
 after adding trust, retain the backup and inspect setup status before retrying
 the same IDs. No remote installation or service start occurs during enrollment.
 
+## Initial access from a shared password
+
+For an onboarding request, discovery labels eligible authentication-unavailable
+private IPv4 endpoints with `endpoint_id` and `initial_access_available`.
+Genie uses `request_spark_access(scan_id, endpoint_ids)` to put up to eight of
+these endpoints in **Gate Genie → New Spark access**. The owner enters the
+shared SSH username/password in that local form, never in chat or Telegram.
+Submitting the form saves a memory-only grant and wakes the same conversation;
+`bootstrap_spark_access(access_id)` performs the native work. Saved status and
+completion follow-ups use the same ID across uncertain responses and restarts.
+
+Each host is checked against its saved SSH host key and GB10 hardware identity
+before a key write. Known fleet hardware is excluded. The installer adds an
+existing gateway public key to `authorized_keys`, with a private timestamped
+backup, preserving existing bytes and restricted keys. It verifies key-only SSH
+and the same hardware afterward. Duplicate addresses do not cause duplicate
+installations. No private key is created, unlocked, replaced or copied. The
+gateway must already have a usable SSH key, and the host must accept ordinary
+SSH password authentication. Unsupported keyboard-interactive/password-change
+flows report a prerequisite rather than changing authentication settings.
+
+The password is sent to an isolated local SSH helper through a private input
+pipe, then to SSH through a terminal; it is absent from command arguments,
+environment variables, tool calls, saved state and terminal logs. A grant lasts
+15 minutes for starting new steps, is forgotten after the attempt, and disappears
+on dashboard restart. In-progress accepted work can finish after revocation.
+Wrong passwords require a fresh local grant; no automatic password retries.
+A lost key-install reply permits only key-access verification on the same ID,
+never an automatic repeat of the write. Active access work blocks an ordinary
+dashboard restart. After key access succeeds, fresh discovery and identity-bound
+enrollment are still required before the originally requested model setup.
+
 **Automatic onboarding remains incomplete.** DNS-SD service discovery,
-unconfigured cable links, password credential bootstrap, IPv6-only setup and
+unconfigured cable links, IPv6-only setup and
 peer-only reachability remain unfinished. Discovered enrollment currently needs
 a verified IPv4 path with existing SSH key access. An IPv6
 link-local neighbor observed on a remote Spark belongs to that remote interface;

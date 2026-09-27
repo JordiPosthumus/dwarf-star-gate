@@ -228,6 +228,10 @@ function candidateRecord(facts,identity,existing){
     device_tree_model:facts.device_tree_model??null,addresses:[],reported_addresses:reportedAddresses(facts),existing_connections:existing,state:existing.length?'existing_spark':'discovered_spark',
     enrollment_ready:false,scope:'Hardware identified; discovery did not enroll, configure, update or qualify this host.'};
 }
+function initialAccessEndpoint(row,connections){
+  return row.state==='ssh_access_unverified'&&row.ssh_open&&net.isIP(row.address)===4&&localAddress(row.address)&&!row.reported_by?.length&&
+    !connections.some(c=>c.destination===row.address)&&row.attempts?.some(a=>a.reason==='authentication_unavailable');
+}
 
 export function createSparkDiscovery({directory,aliases=async()=>[],sources=localNetworkSources,port=probeSSHPort,inspect=inspectDiscoverySSH,resolve=resolveSSH,now=()=>new Date().toISOString(),maxCandidates=64}={}){
   fs.mkdirSync(directory,{recursive:true,mode:0o700});
@@ -297,6 +301,7 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
       const address=net.isIP(neighbor.dst)===6&&/^fe[89ab]/i.test(neighbor.dst)?`${neighbor.dst}%${neighbor.dev}`:neighbor.dst;
       if(localAddress(address))peers.push({via:host.ssh,address,interface:neighbor.dev,state:'peer_visible_unverified',scope:address.includes('%')?'IPv6 link-local scope belongs to the remote interface, not a gateway interface.':'Remote neighbor evidence alone establishes neither gateway reachability nor unreachability.'});
     }
+    for(const row of unverified){row.endpoint_id=hash([id,row.address]);row.initial_access_available=!!initialAccessEndpoint(row,connections);}
     state={scan_id:id,state:'complete',observed_at:now(),addresses_checked:ports.length,ssh_open:open.length,candidates:[...candidates.values()].sort((a,b)=>a.identity.localeCompare(b.identity)),unverified,peer_neighbors:peers,
       configured_aliases:configured.sort(),configured_connections:connections,known_hosts:known.map(({ssh,identity,hostname,facts})=>({ssh,identity,destination:hostname,reported_addresses:reportedAddresses(facts)})),issues,coverage:'partial',scope:'Read-only discovery. Missing candidates may require multicast, cable configuration, peer reachability or SSH access; this result never proves absence.'};save();
   };
@@ -307,7 +312,19 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
     const result=JSON.parse(fs.readFileSync(saved,'utf8'));
     return result.state==='running'?{...result,state:'observation_lost',scope:'The earlier read-only scan is no longer observed. No enrollment or setup was performed.'}:result;
   };
-  return {status,async candidate({scan_id,candidate_id}){
+  return {status,async accessCandidates({scan_id}={}){
+    const scan=status({scan_id});
+    if(scan.state!=='complete'||!scanIdPattern.test(scan.scan_id??''))throw Error('Ask Genie to finish a discovery scan before authorizing initial access.');
+    if(JSON.stringify([...new Set(await aliases())].sort())!==JSON.stringify(scan.configured_aliases))throw Error('A fresh discovery scan is needed after configured connections changed.');
+    const knownHosts=path.join(directory,scan.scan_id,'known_hosts');
+    if(!fs.existsSync(knownHosts))throw Error('The scan host-key receipt is missing.');
+    return {scan_id:scan.scan_id,knownHosts,known_hosts_sha256:createHash('sha256').update(fs.readFileSync(knownHosts)).digest('hex'),
+      known_identities:scan.known_hosts.filter(h=>h.identity).map(h=>h.identity),
+      endpoints:scan.unverified.filter(row=>initialAccessEndpoint(row,scan.configured_connections)).map(row=>({
+          endpoint_id:hash([scan.scan_id,row.address]),host:row.address,username:row.attempts.find(a=>a.reason==='authentication_unavailable'&&userPattern.test(a.username??''))?.username??null,
+          scope:'Unidentified SSH endpoint from this scan. Hardware must be verified before adding a key.'})),
+    };
+  },async candidate({scan_id,candidate_id}){
     if(!scanIdPattern.test(scan_id??'')||!/^[a-f0-9]{64}$/.test(candidate_id??''))throw Error('Select a saved scan and hardware-verified candidate ID.');
     const scan=status({scan_id});if(scan.state!=='complete')throw Error('Wait for this discovery scan to complete.');
     if(JSON.stringify([...new Set(await aliases())].sort())!==JSON.stringify(scan.configured_aliases))throw Error('Configured SSH connections changed or this scan predates enrollment evidence; discover again before enrollment.');

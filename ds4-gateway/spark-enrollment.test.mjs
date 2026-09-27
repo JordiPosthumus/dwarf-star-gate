@@ -76,7 +76,7 @@ test('pinned inspection cannot accept a global/DNS key or reuse a previously con
  const f=fixture(t),knownHosts=path.join(f.directory,'receipt');let args;
  const observed=await inspectNewSpark('owner@'+details.host,{directory:f.directory,knownHosts,command:async(command,input)=>{assert.equal(command,'ssh');args=input;return {stdout:JSON.stringify(hardware)};}});
  assert.equal(sparkIdentity(observed),discovered.candidate_id);
- for(const option of ['UserKnownHostsFile='+knownHosts,'StrictHostKeyChecking=yes','GlobalKnownHostsFile=/dev/null','VerifyHostKeyDNS=no','UpdateHostKeys=no','ControlMaster=no','ControlPath=none'])assert.ok(args.includes(option));
+ for(const option of ['UserKnownHostsFile='+knownHosts,'StrictHostKeyChecking=yes','GlobalKnownHostsFile=/dev/null','KnownHostsCommand=none','VerifyHostKeyDNS=no','UpdateHostKeys=no','ControlMaster=no','ControlPath=none'])assert.ok(args.includes(option));
  assert.equal(args.includes('StrictHostKeyChecking=accept-new'),false);assert.equal(fs.readdirSync(f.directory).length,0);
 });
 test('the connected discovery UI asks Genie to find hosts instead of asking the owner for their IPs',t=>{
