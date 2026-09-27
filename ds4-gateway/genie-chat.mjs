@@ -6,6 +6,7 @@ import {hourglassRunsForChat} from './hourglass-runs.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {GenieStudy,STUDY_INSTRUCTIONS} from './genie-study.mjs';
+import {machineGroup} from './fleet-machines.mjs';
 
 function validResearchEvent(e){return e&&['search','read'].includes(e.kind)&&['reading','complete','failed'].includes(e.state)&&typeof e.at==='string'&&(e.sources===undefined||(Array.isArray(e.sources)&&e.sources.every(s=>s&&typeof s.url==='string'&&(s.title===undefined||typeof s.title==='string'))));}
 function validResearch(m){return m.research===undefined||(m.role==='user'?typeof m.research==='boolean':m.research&&Number.isFinite(m.research.authorized_at)&&Array.isArray(m.research.events)&&m.research.events.every(validResearchEvent));}
@@ -15,6 +16,9 @@ function validResearch(m){return m.research===undefined||(m.role==='user'?typeof
 export function chatContext(snapshot={}) {
   const g=snapshot.gateway;
   const take=(value,keys)=>Object.fromEntries(keys.filter(k=>value?.[k]!==undefined).map(k=>[k,value[k]]));
+  const physical=w=>Array.isArray(w.physical_machines)?w.physical_machines.filter(id=>typeof id==='string'):machineGroup(w.id);
+  const topology=w=>({physical_machines:physical(w),serving_on_shared_hardware:(g?.workers??[])
+    .filter(other=>other.id!==w.id&&other.is_healthy===true&&!other.drained&&physical(other)?.some(id=>physical(w)?.includes(id))).map(other=>other.id)});
   return {
     observed_at:snapshot.gateway_at??snapshot.time??null,
     source:snapshot.demo?'example setup':'dashboard observation',
@@ -22,12 +26,14 @@ export function chatContext(snapshot={}) {
     gateway:take(g,['model','context_length','request_timeout_ms','queue_timeout_ms','healthy','total','active','queued','available','draining']),
     genie_capabilities:g?.genie_capabilities??null,
     recovery:g?.recovery?{...take(g.recovery,['configured','automatic','profile_handback_automatic']),workers:(g.recovery.workers??[]).map(w=>take(w,['worker_id','configured','adapter','eligible','reason','state','inspected_at'])),scope:'Dated gateway policy and worker eligibility. Automatic policy on does not mean a worker is eligible. Configuration-record mismatches do not prove this switch is off.'}:null,
-    servers:(g?.workers??[]).map(w=>({...take(w,['id','model','backend','context_length','is_healthy','drained','load','max_concurrent_requests','queued','active_seconds','quarantine','model_aliases']),maintenance_locks:(w.maintenance_locks??[]).map(lock=>take(lock,['id','name','created_at','review_at','control_channel']))})),
+    servers:(g?.workers??[]).map(w=>({...take(w,['id','model','backend','context_length','is_healthy','drained','load','max_concurrent_requests','queued','active_seconds','quarantine','model_aliases','operator_paused']),...topology(w),
+      health_probe:take(w,['probe_error','last_probe','health_state_source']),last_operator_action:w.last_operator_action?take(w.last_operator_action,['action','time','control_channel']):null,
+      maintenance_locks:(w.maintenance_locks??[]).map(lock=>take(lock,['id','name','created_at','review_at','control_channel']))})),
     configuration_records:recordsForChat(snapshot.server_records),
     hourglass_reports:hourglassForChat(snapshot.hourglass_reports),
     hourglass_measurements:hourglassRunsForChat(snapshot.hourglass_measurements),
     operational_activity:activityForChat(snapshot),
-    scope:'Observed setup only. Missing fields are unknown. Maintenance locks identify intentional reservations, not proof of native progress or successful restoration. Tool availability and action authority come from the tools and capability controls supplied for this turn.',
+    scope:'Observed model-service entries, not a physical-machine inventory. Multiple entries can share hardware; a paused or unhealthy entry does not mean those physical Sparks are offline when another service is serving on them. Endpoint probe health, routing pauses, management reachability and recovery enrollment are separate evidence. Missing recovery enrollment does not itself cause an endpoint health failure. Last operator action time is distinct from historical recovery/drill dates; its control channel does not identify the human actor. Missing fields are unknown. Maintenance locks are reservations, not proof of native progress or restoration. Tool availability and authority come from supplied tools and capability controls.',
   };
 }
 

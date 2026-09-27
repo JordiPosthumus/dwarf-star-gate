@@ -44,7 +44,10 @@ Incoming questions are saved with stable Telegram-derived request IDs before
 advancing the receive offset. Repeated updates reuse the existing Genie request.
 If the dashboard interrupts a Genie reply, its existing interrupted state is
 reported rather than automatically rerunning tools. Replies are retained locally
-and split into plain-text messages within Telegram's message-size limit.
+and split into messages within Telegram's message-size limit. Balanced `**bold**`
+in prose is sent using explicit Telegram formatting entities, including across
+message boundaries. Code spans, code fences, HTML and unmatched markers remain
+literal text; replies are not passed to Telegram's Markdown or HTML parser.
 
 Telegram `sendMessage` has no caller-supplied idempotency key. An uncertain send
 or a crash after recording send intent is marked unconfirmed and is not blindly
