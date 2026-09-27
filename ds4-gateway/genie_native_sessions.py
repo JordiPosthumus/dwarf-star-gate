@@ -306,6 +306,8 @@ def register_native_sessions(ctx):
                     return {'state': 'observed', 'conversations': list(self.conversations.records.values())}
                 if payload.get('action') == 'session':
                     return await self.observe_session(payload)
+                if payload.get('action') == 'observe':
+                    return await self.observe_many(payload)
                 if payload.get('action') == 'transcript':
                     return await self.read_transcript(payload)
                 if payload.get('action') in ('stop', 'continue'):
@@ -369,6 +371,36 @@ def register_native_sessions(ctx):
             if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
                 raise ValueError('Native session changed during observation; read it again')
             return {**page, 'session_key': key}
+
+        async def observe_many(self, payload):
+            keys = payload.get('session_keys')
+            if (set(payload) != {'action', 'session_keys'} or not isinstance(keys, list)
+                    or not 1 <= len(keys) <= 100 or any(not isinstance(key, str) or key not in self.requests.allowed for key in keys)
+                    or len(set(keys)) != len(keys)):
+                raise ValueError('Observe one to one hundred distinct explicitly connected sessions')
+            results = []
+            for key in keys:
+                try:
+                    before = await self.observe_session({'action': 'session', 'session_key': key})
+                    if before.get('state') != 'observed':
+                        results.append(before)
+                        continue
+                    db = await self.gateway_runner.async_session_store._db_for_key(key)
+                    if db is None:
+                        raise ValueError('Native display store is unavailable')
+                    # Recompute the canonical full display revision, including
+                    # migrated metadata and request receipts. No mtime shortcut,
+                    # message-count heuristic or compressed-context substitute.
+                    page = await asyncio.to_thread(native_display_page, db, before['session_id'], 0, 1,
+                                                   request_metadata=lambda content: self.requests.transcript_metadata(key, content))
+                    after = await self.observe_session({'action': 'session', 'session_key': key})
+                    if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
+                        raise ValueError('Native session changed during observation')
+                    results.append({**after, 'history': {'session_id': page['session_id'],
+                                                       'revision': page['revision'], 'total': page['pagination']['total']}})
+                except Exception:
+                    results.append({'state': 'unavailable', 'session_key': key})
+            return {'state': 'observed', 'sessions': results}
 
         async def observe_session(self, payload):
             key = payload.get('session_key')

@@ -12,7 +12,7 @@ function fixture(t){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'native-study-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const f={time:100000,views:new Map(),receipts:new Map(),calls:[],fail:false,suspended:false,uncertain:false};
   const client={bindings:new Map(),binding:id=>client.bindings.get(id),discover:async()=>[],
-    read:async id=>{if(f.fail)throw Error('Observation unavailable');return structuredClone(f.views.get(id));},
+    read:async id=>{if(f.fail)throw Error('Observation unavailable');return {...structuredClone(f.views.get(id)),observed_at:new Date(f.time).toISOString()};},
     create:async metadata=>{
       const saved=JSON.parse(fs.readFileSync(path.join(directory,'research-plan.json'),'utf8'));
       assert.equal(saved.last_run.conversation_id,metadata.id,'Schedule intent exists before native creation');

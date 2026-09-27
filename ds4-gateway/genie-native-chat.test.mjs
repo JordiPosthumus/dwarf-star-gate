@@ -75,12 +75,13 @@ async function fixture(t){
     const control=req.url.includes('/platforms/');
     if(req.headers.authorization!=='Bearer '+f[control?'control_token':'api_key']){res.statusCode=401;return res.end('{}');}
     if(f.unavailable){res.statusCode=503;return res.end('{"secret":"must-not-leak"}');}
+    if(body?.action==='observe')return res.end(JSON.stringify({state:'observed',sessions:body.session_keys.map(session_key=>({...observed,session_key,...f.observation,history:{session_id:'native-session',revision:'a'.repeat(64),total:rows.length,...f.history}}))}));
     if(body?.action==='session'){f.reads++;return res.end(JSON.stringify({...observed,session_id:f.changed&&f.reads>1?'changed-session':'native-session'}));}
     if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id,source_request_id:f.wrongCorrelation?'wrong-request':body.source_request_id,...('research' in body?{research:body.research}:{})}));
     if(body?.action==='status')return res.end(JSON.stringify({state:'unknown',request_id:body.request_id}));
     assert.equal(body?.action,'transcript');
     const data=rows.slice(body.offset,body.offset+body.limit);
-    const page={state:'observed',session_key:observed.session_key,session_id:'native-session',revision:(f.historyChanged&&body.offset>0?'b':'a').repeat(64),data,pagination:{offset:body.offset,limit:body.limit,returned:data.length,total:rows.length,order:'oldest'}};
+    const page={state:'observed',session_key:observed.session_key,session_id:'native-session',revision:f.history?.revision??(f.historyChanged&&body.offset>0?'b':'a').repeat(64),data,pagination:{offset:body.offset,limit:body.limit,returned:data.length,total:rows.length,order:'oldest'}};
     if(f.badPage)page.pagination.returned=0;
     res.end(JSON.stringify(page));
   });
@@ -98,6 +99,30 @@ test('native client reads actual HTTP messages and uses only the session injecto
   f.api_key='rotated-fixture-api-key';f.control_token='rotated-fixture-control-key';f.save();
   assert.equal((await f.client.read('conversation')).native_session_id,'native-session');
   await assert.rejects(f.client.submit('other','Inspect','request-12345'),/not connected/);
+});
+
+test('fresh canonical revisions reuse complete history while updating execution and invalidating changed content',async t=>{
+  const f=await fixture(t),refresh=async()=>f.client.read('conversation',{all:true,observation:(await f.client.observe(['conversation'])).get('conversation')});
+  const first=await refresh();first.messages[0].text='external mutation';
+  const before=f.calls.length;
+  f.observation={busy:true,queued:3,turn_id:'new-turn',hold:{state:'held',hold_id:'hold',turn_id:'old',queued:3},observed_at:'2026-09-27T05:00:02Z'};
+  const second=await refresh();
+  assert.deepEqual(f.calls.slice(before).map(c=>c.body.action),['observe'],'Unchanged full history never downloads again');
+  assert.equal(second.messages[0].text,'Inspect the service.');assert.equal(second.busy,true);assert.equal(second.queued,3);assert.equal(second.native_turn_id,'new-turn');assert.equal(second.native_hold.hold_id,'hold');assert.equal(second.observed_at,f.observation.observed_at);
+  f.history={revision:'b'.repeat(64)};
+  const changed=f.calls.length;await refresh();
+  assert.deepEqual(f.calls.slice(changed).map(c=>c.body.action),['observe','transcript','session'],'Same message count with different full revision forces a download');
+  f.observation={state:'unavailable'};await assert.rejects(refresh(),/unavailable/);
+  f.observation={queued:-1};await assert.rejects(refresh(),/invalid/);
+  f.observation={};f.history={revision:'invalid'};await assert.rejects(refresh(),/invalid/);
+});
+
+test('bulk observations reject duplicate or substituted bindings and partial history is never cached',async t=>{
+  const f=await fixture(t);await f.client.read('conversation',{limit:2});
+  assert.equal(f.client.historyCache.size,0);
+  await assert.rejects(f.client.observe(['conversation','conversation']),/distinct/);
+  f.client.control=async()=>({state:'observed',sessions:[{...observed,session_key:'unbound'}]});
+  await assert.rejects(f.client.observe(['conversation']),/inconsistent/);
 });
 
 test('routing changes and unavailable observations never become empty history or automatic replay',async t=>{

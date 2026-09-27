@@ -61,14 +61,23 @@ export class NativeDashboardChat{
       try{
         if(id===undefined)await this.client.discover();
         const ids=id===undefined?[...this.client.bindings.keys()]:[id];
-        for(const key of ids){
+        const observations=this.client.observe?await this.client.observe(ids):null;
+        let cursor=0,failed=false;
+        const reader=async()=>{while(cursor<ids.length){
+          const key=ids[cursor++];
           try{
-            const conversation=await this.client.read(key,{all:true});
+            const conversation=await this.client.read(key,{all:true,...(observations?{observation:observations.get(key)}:{})});
             if(this.closed)throw unavailable();
             this.sessions.set(key,nativeDashboardView(conversation,this.sessions.get(key),this.now()));
-            this.observed.set(key,this.now());this.failures.delete(key);
-          }catch{this.failures.add(key);throw unavailable();}
-        }
+            // Cache reuse must not renew an old execution timestamp. Native
+            // observations use the same host clock; unknown/stale stays unknown.
+            const stamp=Date.parse(conversation.observed_at);
+            if(!Number.isFinite(stamp))throw unavailable();
+            this.observed.set(key,stamp);this.failures.delete(key);
+          }catch{this.failures.add(key);failed=true;}
+        }};
+        await Promise.all(Array.from({length:Math.min(4,ids.length)},reader));
+        if(failed)throw unavailable();
       }catch{if(id===undefined)this.failures.add('*');throw unavailable();}
       if(id===undefined){this.failures.delete('*');this.catalogueObserved=true;}
     })();

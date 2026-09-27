@@ -53,6 +53,25 @@ test('concurrent refreshes cannot overwrite newer execution with an earlier resp
   assert.equal(f.chat.get('fixture').native_turn_id,'next-turn');
 });
 
+test('catalogue refresh bounds parallel readers and drains all reads before reporting a failure',async()=>{
+  const f=fixture();let active=0,maximum=0;const read=[];
+  f.client.bindings=new Map(Array.from({length:9},(_,i)=>['conversation-'+i,{}]));
+  f.client.observe=async ids=>new Map(ids.map(id=>[id,{id}]));
+  f.client.read=async(id,{observation})=>{
+    assert.equal(observation.id,id);active++;maximum=Math.max(maximum,active);
+    await new Promise(r=>setImmediate(r));active--;read.push(id);
+    if(id==='conversation-1')throw Error('Unavailable');
+    return {...base(),id};
+  };
+  await assert.rejects(f.chat.refresh(),/unavailable/);
+  assert.equal(maximum,4);assert.equal(active,0);assert.equal(read.length,9);assert.equal(f.chat.status().available,false);
+});
+
+test('refresh never renews stale source execution timestamps',async()=>{
+  const f=fixture();f.time=20000;await f.chat.refresh();
+  assert.equal(f.chat.status().available,false);assert.throws(()=>f.chat.get('fixture'),/unavailable/);
+});
+
 function submissionFixture(){
   const f=fixture();f.research=true;f.receipts=new Map();
   f.client.bindings.set('fixture',{session_key:'key'});

@@ -57,6 +57,12 @@ class NativeHistory(unittest.TestCase):
             with self.subTest(offset=offset, limit=limit), self.assertRaises(ValueError):
                 native_display_page(self.db, 'parent', offset, limit)
 
+    def test_full_revision_includes_request_metadata_even_when_message_count_is_unchanged(self):
+        first = native_display_page(self.db, 'parent', 0, 1, request_metadata=lambda content: {'research': False})
+        second = native_display_page(self.db, 'parent', 0, 1, request_metadata=lambda content: {'research': True})
+        self.assertEqual(first['pagination']['total'], second['pagination']['total'])
+        self.assertNotEqual(first['revision'], second['revision'])
+
 
 if __name__ == '__main__':
     unittest.main()

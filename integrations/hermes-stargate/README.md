@@ -221,8 +221,11 @@ note revisions and memory switch as existing chat. Each context read refreshes
 the notebook; disabled or unavailable memory never reuses an earlier snapshot.
 Notebook contents remain private context and are not operational authorization.
 
-The live dashboard backend switch, stop/continue controls, study scheduling and
-owner/history migration still require completion before production cutover.
+The staged dashboard facade supports New/Send/Stop/Continue and asynchronous
+study scheduling through native Hermes. Full prior-study evidence is retained
+in the native request, rather than passed only through a bounded hook preview.
+Production selection still requires pending-input display, watcher integration,
+complete provider/owner configuration and a final idle history migration.
 
 The session observation now includes `turn_id` only when a live native adapter
 guard matches the runner's current execution generation. The identity changes
@@ -241,5 +244,28 @@ a failure before the held receipt restores the original buffer and live timer.
 Earlier schema-1 checkpoints remain readable. `prepared` records are uncertain and must not be replayed;
 `held` confirms queue detachment, not interruption of an agent. Failed writes
 after atomic replacement require reconciliation rather than duplication.
-This primitive does not install the hold gate, stop a turn, or resume input.
-Those controls remain disabled until their native integration is tested.
+The higher-level native controls install the hold gate and integrate Stop and
+Continue. The full native fixture verifies those controls through dashboard HTTP,
+including gateway restart while held and exactly-once FIFO continuation. This
+staged integration has not selected a production backend or Telegram poller.
+
+## Refreshing a retained catalogue
+
+The authenticated `observe` action accepts up to 100 distinct, explicitly bound
+session keys. It reads each native scheduler and recomputes the complete display
+revision, including continuation history, migrated metadata and request receipts.
+A failed observation remains unavailable; it cannot authorize work as idle.
+
+The client keeps an in-memory cache only after reading all native display pages.
+Reuse requires matching route, resolved display session, revision and message
+count. Every reuse takes busy state, queue depth, turn identity, holds and time
+from the new observation. Different content invalidates the cache even when the
+message count is unchanged. Partial pages never populate it.
+
+Catalogue refreshes are serialized; within a refresh, at most four conversations
+are read concurrently. The facade preserves source observation timestamps rather
+than renewing them when cached data is displayed. The full native fixture seeds
+77 synthetic conversations and checks that a warm refresh transfers catalogue
+and fresh revision metadata without downloading unchanged transcripts. It
+retains measured cold/warm bytes, request counts and elapsed times. No real
+owner history or model execution is used for that performance fixture.

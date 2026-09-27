@@ -95,6 +95,7 @@ export class NativeHermesChatClient{
     this.descriptor=descriptor;this.fetch=fetchImpl;
     if(!Array.isArray(bindings)||bindings.some(b=>typeof b?.id!=='string'||typeof b?.session_key!=='string'||!b.id||!b.session_key)||new Set(bindings.map(b=>b.id)).size!==bindings.length)throw Error('Configure explicit native conversation bindings.');
     this.bindings=new Map(bindings.map(b=>[b.id,{...b}]));
+    this.historyCache=new Map();
   }
   binding(id){const b=this.bindings.get(id);if(!b)throw Error('Conversation is not connected to native Hermes.');return b;}
   async request(route,{body,control=false}={}){
@@ -132,10 +133,34 @@ export class NativeHermesChatClient{
     return discovered;
   }
   async session(id){const b=this.binding(id);const s=await this.control({action:'session',session_key:b.session_key});if(s.session_key!==b.session_key||s.state!=='observed'||typeof s.session_id!=='string'||typeof s.busy!=='boolean'||!Number.isInteger(s.queued))throw Error('Fresh native session evidence is unavailable.');return s;}
-  async read(id,{offset=0,limit=500,all=false}={}){
+  async observe(ids){
+    if(!Array.isArray(ids)||new Set(ids).size!==ids.length)throw Error('Use distinct native conversation identities.');
+    const result=new Map();
+    for(let start=0;start<ids.length;start+=100){
+      const part=ids.slice(start,start+100),keys=part.map(id=>this.binding(id).session_key);
+      if(new Set(keys).size!==keys.length)throw Error('Native conversation bindings overlap.');
+      const response=await this.control({action:'observe',session_keys:keys});
+      if(response.state!=='observed'||!Array.isArray(response.sessions)||response.sessions.length!==keys.length||new Set(response.sessions.map(s=>s?.session_key)).size!==keys.length)throw Error('Native bulk observation is unavailable.');
+      for(const [index,id]of part.entries()){
+        const row=response.sessions.find(s=>s?.session_key===keys[index]);
+        if(!row||!['observed','unavailable','missing'].includes(row.state))throw Error('Native bulk observation is inconsistent.');
+        if(row.state==='observed'&&(typeof row.session_id!=='string'||!row.session_id||typeof row.busy!=='boolean'||!Number.isSafeInteger(row.queued)||row.queued<0||!Number.isFinite(Date.parse(row.observed_at))||typeof row.history?.session_id!=='string'||!row.history.session_id||!Number.isSafeInteger(row.history.total)||row.history.total<0||typeof row.history.revision!=='string'||!/^[a-f0-9]{64}$/.test(row.history.revision)))throw Error('Native history observation is invalid.');
+        result.set(id,row);
+      }
+    }
+    return result;
+  }
+  async read(id,{offset=0,limit=500,all=false,observation}={}){
     if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>500)throw Error('Invalid native transcript page.');
     if(typeof all!=='boolean'||(all&&offset!==0))throw Error('Complete native history starts at the first page.');
-    const b=this.binding(id),session=await this.session(id);
+    const b=this.binding(id),session=observation??await this.session(id);
+    if(session.state!=='observed'||session.session_key!==b.session_key||typeof session.session_id!=='string'||!session.session_id||typeof session.busy!=='boolean'||!Number.isSafeInteger(session.queued)||session.queued<0||!Number.isFinite(Date.parse(session.observed_at)))throw Error('Fresh native session evidence is unavailable.');
+    const cached=this.historyCache.get(id),history=observation?.history;
+    if(all&&cached&&history&&cached.route_session_id===session.session_id&&cached.view.native_session_key===b.session_key&&
+      cached.view.native_session_id===history.session_id&&cached.view.native_history_revision===history.revision&&cached.view.pagination.total===history.total){
+      return {...structuredClone(cached.view),title:b.title??'Gate Genie',purpose:b.purpose??null,
+        busy:session.busy,queued:session.queued,native_turn_id:session.turn_id??null,native_hold:session.hold??null,observed_at:session.observed_at};
+    }
     let page,revision=null,resolved=null,total=null,cursor=offset;const messages=[];
     do{
       page=await this.control({action:'transcript',session_key:b.session_key,session_id:session.session_id,offset:cursor,limit,revision});
@@ -148,7 +173,9 @@ export class NativeHermesChatClient{
     // or reset must not silently stitch different conversations together.
     const after=await this.session(id);
     if(after.session_id!==session.session_id)throw Error('Native session changed during observation; read it again.');
-    return {...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),purpose:b.purpose??null,created_at:stamp(b.created_at),native_history_revision:revision};
+    const view={...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),purpose:b.purpose??null,created_at:stamp(b.created_at),native_history_revision:revision};
+    if(all&&view.history_complete)this.historyCache.set(id,{route_session_id:session.session_id,view:structuredClone(view)});
+    return view;
   }
   async submit(id,text,requestId,{research,studyContext:study}={}){
     const b=this.binding(id);

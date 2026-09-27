@@ -1,5 +1,6 @@
 // Full native channel test: isolated profile, fake Bot API/model/tools, no real secrets.
 import {fileURLToPath} from 'node:url';
+import {randomUUID} from 'node:crypto';
 import {NativeHermesChatClient} from '../ds4-gateway/genie-native-chat.mjs';
 import {NativeDashboardChat} from '../ds4-gateway/genie-native-dashboard.mjs';
 import {STUDY_PROMPT,STUDY_INSTRUCTIONS} from '../ds4-gateway/genie-study.mjs';
@@ -260,7 +261,38 @@ const studyView=await nativeChat.read(lastStudy.last_run.conversation_id,{all:tr
 assert.equal(studyView.messages[0].text,STUDY_PROMPT,'Display shows the exact original question while native input retains its full study context');
 assert.equal(studyView.messages[1].context.previous_study.latest_completed_answer.text,studyAnswer);
 write('native-study-transcript.json',studyView);
-const result={native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===4&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+// Owner-sized synthetic catalogue, native SQLite history and real loopback HTTP.
+// No real owner transcript or model request is used by this performance check.
+const bulkRows=[];
+for(const session_keys of [[],['unbound-session'],Array(101).fill('agent:main:telegram:dm:12345'),['agent:main:telegram:dm:12345','agent:main:telegram:dm:12345']]){
+ assert.equal((await nativeChat.control({action:'observe',session_keys})).state,'rejected','Bulk observations require distinct authorized bindings and bounded requests');
+}
+for(let i=0;i<77;i++){
+ const made=await nativeChat.create({id:randomUUID(),title:'Synthetic retained conversation '+i});
+ bulkRows.push({id:made.id,session_id:made.native_session_id});
+}
+write('bulk-fixture-sessions.json',bulkRows);
+execFileSync(source+'/.venv/bin/python',['-B','-c',
+ 'import sys,json; from pathlib import Path; from hermes_state import SessionDB; db=SessionDB(Path(sys.argv[1])); rows=json.load(open(sys.argv[2])); [(db.append_message(r["session_id"],"user","Synthetic history "+str(i)),db.append_message(r["session_id"],"assistant","Retained evidence. "*15000,finish_reason="stop")) for i,r in enumerate(rows)]; db.close()',
+ home+'/state.db',home+'/bulk-fixture-sessions.json'],{env:{...process.env,PYTHONPATH:source},stdio:['ignore','pipe','pipe']});
+let transferred=0,bulkCalls=[];
+const measuredClient=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:migratedId,session_key:'agent:main:telegram:dm:12345'}],fetchImpl:async(url,options)=>{
+ const response=await fetch(url,options);transferred+=(await response.clone().arrayBuffer()).byteLength;
+ bulkCalls.push(JSON.parse(options.body).action);return response;
+}});
+const measuredDashboard=new NativeDashboardChat({client:measuredClient});
+let began=performance.now();await measuredDashboard.refresh();
+const coldRefresh={milliseconds:performance.now()-began,bytes:transferred,calls:bulkCalls.length,transcripts:bulkCalls.filter(a=>a==='transcript').length};
+assert.equal(measuredDashboard.status().available,true);
+transferred=0;bulkCalls=[];began=performance.now();await measuredDashboard.refresh();
+const warmRefresh={milliseconds:performance.now()-began,bytes:transferred,calls:bulkCalls.length,transcripts:bulkCalls.filter(a=>a==='transcript').length};
+assert.deepEqual(bulkCalls,['conversations','observe']);assert.equal(warmRefresh.transcripts,0);
+assert.ok(coldRefresh.bytes>21000000);assert.ok(warmRefresh.bytes<coldRefresh.bytes/100);
+assert.ok(measuredDashboard.get(bulkRows[76].id).messages.at(-1).text==='Retained evidence. '.repeat(15000).trim(),'All synthetic history remains in the display projection');
+assert.equal(measuredDashboard.status().available,true);
+const bulkRefresh={syntheticConversations:77,catalogueSize:measuredClient.bindings.size,cold:coldRefresh,warm:warmRefresh};
+write('bulk-refresh-acceptance.json',bulkRefresh);
+const result={bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===4&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{if(dashboardServer){dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));}releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}
