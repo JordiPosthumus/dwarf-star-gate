@@ -4,9 +4,34 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {hermesProvider} from './genie-hermes.mjs';
+import {hermesProvider,hermesGatewayWaitEnvironment} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {GenieMemory} from './genie-memory.mjs';
+
+test('installed Hermes uses gateway wait allowance for both stale-stream and socket deadlines',{
+  skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,
+},async t=>{
+  const {execFileSync}=await import('node:child_process');
+  const home=fs.mkdtempSync(path.join(os.tmpdir(),'sg-native-wait-policy-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
+  const seconds=72360000;
+  const code=`import json\nfrom types import SimpleNamespace\nfrom agent.chat_completion_helpers import _StreamingCall\nc=_StreamingCall.__new__(_StreamingCall)\nc.agent=SimpleNamespace(provider='custom',model='fixture',base_url='http://127.0.0.1:12345/v1')\nc.api_kwargs={'messages':[]}\nc._resolve_stale_timeout()\nprint(json.dumps({'stale':c._stream_stale_timeout,'socket':c._stream_timeouts()}))\n`;
+  const env={PATH:process.env.PATH,HOME:home,HERMES_HOME:home,PYTHONPATH:process.env.DSG_TEST_HERMES_SOURCE,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1'};
+  const read=extra=>JSON.parse(execFileSync(process.env.DSG_TEST_HERMES_PYTHON,['-B','-c',code],{cwd:home,env:{...env,...extra},encoding:'utf8',stdio:['ignore','pipe','pipe']}));
+  assert.equal(read({}).stale,900);
+  const resolved=read(hermesGatewayWaitEnvironment(seconds*1000));
+  assert.equal(resolved.stale,seconds);assert.deepEqual(resolved.socket,[seconds,seconds,30]);
+});
+
+test('gateway wait policy reaches the chat child without changing direct-provider defaults',async t=>{
+  const {execFileSync}=await import('node:child_process');const python=execFileSync('which',['python3'],{encoding:'utf8'}).trim();
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-child-wait-policy-')),source=path.join(directory,'source');fs.mkdirSync(source);t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  fs.writeFileSync(path.join(source,'run_agent.py'),`import json,os\nclass AIAgent:\n def __init__(self,**kwargs): self.tools=[]; self.kw=kwargs\n def run_conversation(self,*args,**kwargs):\n  return {'completed':True,'final_response':json.dumps({'timeout':os.environ.get('HERMES_LOCAL_STREAM_STALE_TIMEOUT'),'max_tokens':self.kw['max_tokens'],'reasoning':self.kw['reasoning_config']})}\n`);
+  for(const gateway_tracking of [true,false]){
+    const provider=hermesProvider({python,source,url:'http://127.0.0.1:1/v1',model:'fixture',gateway_tracking,max_tokens:16384,reasoning_effort:'max'},{directory});t.after(()=>provider.close());
+    const value=JSON.parse((await provider.generate({message:'Read fixture',history:[],context:{servers:[],gateway:{queue_timeout_ms:72000000000,request_timeout_ms:360000000}},sessionId:'fixture-session',onDelta:()=>{}})).text);
+    assert.equal(value.timeout,gateway_tracking?'72360000':null);assert.equal(value.max_tokens,16384);assert.deepEqual(value.reasoning,{effort:'max'});
+  }
+});
 
 // Opt-in uses the actual Hermes library, but only a private synthetic provider.
 // It never looks up personal configuration or contacts a real model server.

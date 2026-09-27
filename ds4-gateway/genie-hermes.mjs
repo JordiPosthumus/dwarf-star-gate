@@ -8,6 +8,13 @@ import {identityStatus,runtimeProvenance} from './genie-installation.mjs';
 import {seedGenieHome} from './genie-identity.mjs';
 
 const bridge=fileURLToPath(new URL('./genie_hermes.py',import.meta.url));
+export function hermesGatewayWaitEnvironment(timeoutMs){
+  const seconds=String(queueTimeout(timeoutMs)/1000);
+  // The local gateway may legitimately queue before yielding its first token.
+  // Keep Hermes's stream watchdog/socket limits inside the same outer deadline
+  // instead of silently cancelling and requeuing at its 900-second default.
+  return Object.fromEntries(['HERMES_API_TIMEOUT','HERMES_STREAM_READ_TIMEOUT','HERMES_LOCAL_STREAM_STALE_TIMEOUT','HERMES_STREAM_STALE_TIMEOUT'].map(key=>[key,seconds]));
+}
 function chatError(code){
   const messages={
     timeout:'This reply reached its configured waiting allowance. Your conversation was kept; the request was not replayed.',
@@ -36,6 +43,8 @@ export function hermesProvider(config,{directory,review=false,isCapabilityEnable
     get info(){return {capabilities_configured:{spark_setup:Boolean(config.spark_setup),media:Boolean(config.media),recovery:Boolean(config.recovery),rebalance:Boolean(config.queue),research:Boolean(config.research),inspection:Boolean(config.inspection),server_changes:Boolean(config.operations),hourglass:Boolean(config.hourglass),fleet_power:Boolean(config.power),admission:Boolean(config.admission)},identity:identityStatus(home),runtime_provenance:runtime,gateway_tracking:!review&&config.gateway_tracking===true,engine:'Hermes',model:config.model,mode:'provider',can_act:!review&&((Boolean(config.spark_setup)&&isCapabilityEnabled('spark_setup'))||(Boolean(config.media)&&isCapabilityEnabled('media'))||(Boolean(config.queue)&&isCapabilityEnabled('rebalance'))||(Boolean(config.recovery)&&isCapabilityEnabled('recovery'))||(Boolean(config.power)&&isCapabilityEnabled('fleet_power'))||(Boolean(config.admission)&&isCapabilityEnabled('server_changes'))),recovery_available:!review&&Boolean(config.recovery)&&isCapabilityEnabled('recovery'),queue_available:!review&&Boolean(config.queue)&&isCapabilityEnabled('rebalance'),research_available:Boolean(config.research)&&isCapabilityEnabled('research'),inspection_available:Boolean(config.inspection)&&isCapabilityEnabled('inspection'),operations_available:!review&&Boolean(config.operations)&&isCapabilityEnabled('server_changes'),hourglass_available:!review&&Boolean(config.hourglass)&&isCapabilityEnabled('hourglass'),admission_available:!review&&Boolean(config.admission)&&isCapabilityEnabled('server_changes')};},
     generate(input){return new Promise((resolve,reject)=>{
       const env={PATH:process.env.PATH??'',HOME:home,HERMES_HOME:home,HERMES_WRITE_SAFE_ROOT:home,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',PYTHONIOENCODING:'utf-8',LANG:'en_US.UTF-8'};
+      const timeout=config.timeout_ms??((input.context?.gateway?.queue_timeout_ms??DEFAULT_QUEUE_TIMEOUT_MS)+(input.context?.gateway?.request_timeout_ms??360000000));
+      if(!review&&config.gateway_tracking===true)Object.assign(env,hermesGatewayWaitEnvironment(timeout));
       if(input.signal?.aborted){reject(new DOMException('Aborted','AbortError'));return;}
       let reviewHome=null;
       if(review){try{
@@ -48,7 +57,6 @@ export function hermesProvider(config,{directory,review=false,isCapabilityEnable
       const child=spawn(config.python,['-B',bridge,config.source],{cwd:reviewHome??home,env,stdio:['pipe','pipe','pipe']});children.add(child);
       let pending='',final=null,failed=null,bytes=0,killTimer;
       // Match the observed gateway allowances; do not introduce a shorter chat limit.
-      const timeout=config.timeout_ms??((input.context?.gateway?.queue_timeout_ms??DEFAULT_QUEUE_TIMEOUT_MS)+(input.context?.gateway?.request_timeout_ms??360000000));
       const deadline=deadlineTimer(()=>{failed=chatError('timeout');child.kill();killTimer=setTimeout(()=>child.kill('SIGKILL'),2000);killTimer.unref();},timeout);
       const abort=()=>{failed=new DOMException('Aborted','AbortError');child.kill();killTimer=setTimeout(()=>child.kill('SIGKILL'),2000);killTimer.unref();};
       input.signal?.addEventListener('abort',abort,{once:true});if(input.signal?.aborted)abort();
