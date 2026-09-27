@@ -68,6 +68,26 @@ class NativeSessions(unittest.TestCase):
         self.assertIsNone(self.requests.transcript_metadata('owner-session', content))
         self.assertIsNone(self.requests.transcript_metadata('owner-session', '[DSG request ' + '-' * 36 + ']\n\ntext'))
 
+    def test_full_study_evidence_survives_large_receipt_reload_and_exact_display_projection(self):
+        context={'study_brief':'Inspect the relevant installed source and dated public evidence.',
+                 'previous_study':{'latest_completed_answer':{'text':'Long evidence. '*25000+'END-OF-STUDY'}}}
+        payload={**self.payload,'source_request_id':'study-request-12345','research':True,'study_context':context}
+        receipt=self.requests.dispatch(payload)
+        injected=self.inject.call_args.args[0]
+        self.assertIn('END-OF-STUDY',injected)
+        self.assertGreater(len(injected),262144)
+        restarted=NativeSessionRequests(self.directory,['owner-session'],self.inject)
+        self.assertEqual(restarted.dispatch(payload),receipt)
+        metadata=restarted.transcript_metadata('owner-session',injected)
+        self.assertEqual(metadata['visible_message'],payload['message'])
+        self.assertEqual(metadata['study_context'],context)
+        self.assertEqual(len(metadata['input_sha256']),64)
+        with self.assertRaises(ValueError):
+            restarted.dispatch({**payload,'study_context':{**context,'previous_study':None}})
+        with self.assertRaises(ValueError):
+            restarted.transcript_metadata('owner-session',injected.replace('END-OF-STUDY','changed'))
+        self.assertEqual(self.inject.call_count,1)
+
     def test_rejects_other_sessions_changed_instructions_and_extra_fields(self):
         for change in ({'session_key': 'other'}, {'session_key': []}, {'request_id': '../escape'},
                        {'message': ''}, {'command': 'start'}):

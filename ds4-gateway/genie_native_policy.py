@@ -1,9 +1,10 @@
 """Bind saved UI research choices to exact native turns, without an agent loop."""
 from pathlib import Path
+import copy
 import re
 import threading
 
-from genie_native_sessions import canonical_uuid, private_read, request_fingerprint
+from genie_native_sessions import canonical_uuid, private_read, request_fingerprint, request_input
 
 WEB_TOOLS = frozenset({'web_search', 'web_extract', 'stargate_web_search', 'stargate_web_extract'})
 UNAVAILABLE = 'Research authorization for this exact native turn could not be verified. No web request was issued.'
@@ -23,9 +24,10 @@ class NativeRequestPolicy:
         if not all(isinstance(v, str) and v for v in key) or not session_key:
             return {'context': UNAVAILABLE}
         with self.lock:
-            self.turns[session_id] = (turn_id, None)
+            self.turns[session_id] = (turn_id, None, None)
         try:
             research = True  # Ordinary authorized Telegram input retains the global capability policy.
+            study = None
             if not isinstance(user_message, str):
                 raise ValueError('Native input is not a text request')
             marker = re.match(r'^\[DSG request ([a-f0-9-]{36})\]\n\n', user_message)
@@ -33,15 +35,16 @@ class NativeRequestPolicy:
                 raise ValueError('Invalid native dispatch marker')
             if marker:
                 canonical_uuid(marker[1])
-                record = private_read(self.directory / (marker[1] + '.json'))
+                record = private_read(self.directory / (marker[1] + '.json'), max_bytes=None)
                 if (record is None or record.get('request_id') != marker[1]
                         or record.get('session_key') != session_key
-                        or record.get('message') != user_message[marker.end():]
+                        or request_input(record) != user_message
                         or record.get('fingerprint') != request_fingerprint(record)):
                     raise ValueError('Native input does not match its saved dispatch')
                 research = record.get('research', True)
+                study = record.get('study_context')
             with self.lock:
-                self.turns[session_id] = (turn_id, research)
+                self.turns[session_id] = (turn_id, research, study)
             return {'context': '' if research else DISABLED}
         except Exception:
             return {'context': UNAVAILABLE}
@@ -71,3 +74,15 @@ class NativeRequestPolicy:
         if not session_id or _approval_session_id.get() != session_id:
             return UNAVAILABLE
         return self.reason(session_id, _approval_turn_id.get())
+
+    def handler_study_context(self, session_id):
+        if not session_id:
+            return None
+        from tools.approval_context import _approval_session_id, _approval_turn_id
+        if not session_id or _approval_session_id.get() != session_id:
+            return None
+        with self.lock:
+            value = self.turns.get(session_id)
+            if value is None or value[0] != _approval_turn_id.get() or value[1] is None:
+                return None
+            return copy.deepcopy(value[2])

@@ -19,6 +19,11 @@ const sectionFor=new Map(Object.entries(sections).flatMap(([section,names])=>nam
 const parse=value=>{try{return typeof value==='string'?JSON.parse(value):value;}catch{return null;}};
 const textContent=value=>typeof value==='string'?value:Array.isArray(value)?value.filter(v=>v?.type==='text').map(v=>v.text??'').join('\n'):'';
 const stamp=value=>typeof value==='number'?value*1000:Date.parse(value);
+function studyContext(value){
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='previous_study,study_brief'||typeof value.study_brief!=='string'||!value.study_brief.trim()||
+    (value.previous_study!==null&&(!value.previous_study||typeof value.previous_study!=='object'||Array.isArray(value.previous_study))))throw Error('Invalid native study context.');
+  return JSON.parse(JSON.stringify(value));
+}
 
 export function nativeRequestId(conversationId,requestId){
   if(typeof requestId!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(requestId))throw Error('A message identifier is required.');
@@ -39,23 +44,25 @@ export function readNativeGatewayDescriptor(file){
 
 export function projectNativeConversation({id,title='Gate Genie',session,messages,pagination}){
   if(session?.state!=='observed'||!Array.isArray(messages))throw Error('Fresh native session evidence is unavailable.');
-  const result=[],calls=new Map();let reply=null;
+  const result=[],calls=new Map();let reply=null,pendingStudy=null;
   const ensureReply=row=>{
-    if(!reply){reply={id:`native-${session.session_id}-${row.id}`,role:'assistant',text:'',state:'working',at:stamp(row.timestamp)};result.push(reply);}
+    if(!reply){reply={id:`native-${session.session_id}-${row.id}`,role:'assistant',text:'',state:'working',at:stamp(row.timestamp),...(pendingStudy?{context:structuredClone(pendingStudy)}:{})};result.push(reply);}
     return reply;
   };
   for(const row of messages){
     if(row.display_kind==='dsg_legacy'){
       const legacy=row.dsg_legacy,message=legacy?.message;
       if(legacy?.schema!==1||legacy.conversation_id!==id||typeof legacy.source_sha256!=='string'||!/^[a-f0-9]{64}$/.test(legacy.source_sha256)||!message||message.role!==row.role||message.text!==textContent(row.content)||typeof message.id!=='string'||!['complete','failed','interrupted'].includes(message.state))throw Error('Migrated native history evidence is inconsistent.');
-      result.push({...message,native_row_id:row.id,legacy_source_sha256:legacy.source_sha256});reply=null;
+      result.push({...message,native_row_id:row.id,legacy_source_sha256:legacy.source_sha256});reply=null;pendingStudy=null;
       continue;
     }
     if(row.role==='user'){
       reply=null;const text=textContent(row.content),marker=text.match(/^\[DSG request ([a-f0-9-]{36})\]\n\n/);
       const correlation=row.dsg_request;
       if(correlation&&(correlation.schema!==1||!marker||correlation.request_id!==marker[1]||nativeRequestId(id,correlation.source_request_id)!==marker[1]||('research' in correlation&&typeof correlation.research!=='boolean')))throw Error('Native request correlation is inconsistent.');
-      result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:correlation?.source_request_id??marker[1],native_request_id:marker[1]}:{}),...(correlation&&'research' in correlation?{research:correlation.research}:{})});
+      pendingStudy=correlation&&'study_context' in correlation?studyContext(correlation.study_context):null;
+      if(pendingStudy&&(typeof correlation.visible_message!=='string'||correlation.input_sha256!==createHash('sha256').update(text).digest('hex')))throw Error('Native study input does not match its retained display evidence.');
+      result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:pendingStudy?correlation.visible_message:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:correlation?.source_request_id??marker[1],native_request_id:marker[1]}:{}),...(correlation&&'research' in correlation?{research:correlation.research}:{})});
     }else if(row.role==='assistant'){
       const current=ensureReply(row),text=textContent(row.content);
       if(text)current.text+=(current.text?'\n\n':'')+text;
@@ -143,13 +150,14 @@ export class NativeHermesChatClient{
     if(after.session_id!==session.session_id)throw Error('Native session changed during observation; read it again.');
     return {...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),purpose:b.purpose??null,created_at:stamp(b.created_at),native_history_revision:revision};
   }
-  async submit(id,text,requestId,{research}={}){
+  async submit(id,text,requestId,{research,studyContext:study}={}){
     const b=this.binding(id);
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Enter a message of up to 32,000 characters.');
     if(research!==undefined&&typeof research!=='boolean')throw Error('Research option must be boolean.');
+    if(study!==undefined)study=studyContext(study);
     const identity=nativeRequestId(id,requestId);
-    const receipt=await this.control({action:'send',request_id:identity,source_request_id:requestId,session_key:b.session_key,message:text.trim(),...(research===undefined?{}:{research})});
-    if(receipt.request_id!==identity||receipt.source_request_id!==requestId||(research!==undefined&&receipt.research!==research)||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
+    const receipt=await this.control({action:'send',request_id:identity,source_request_id:requestId,session_key:b.session_key,message:text.trim(),...(research===undefined?{}:{research}),...(study===undefined?{}:{study_context:study})});
+    if(receipt.request_id!==identity||receipt.source_request_id!==requestId||(research!==undefined&&receipt.research!==research)||(study!==undefined&&JSON.stringify(receipt.study_context)!==JSON.stringify(study))||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
     return receipt;
   }
   async stop(id,turnId,holdId){

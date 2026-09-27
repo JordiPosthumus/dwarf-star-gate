@@ -81,3 +81,23 @@ class NativePolicy(unittest.TestCase):
         finally:
             reset_current_observability_context(tokens)
         self.assertEqual(self.policy.handler_reason('native-owner'),UNAVAILABLE)
+
+    @unittest.skipUnless(importlib.util.find_spec('hermes_state'), 'Requires installed native Hermes')
+    def test_full_study_context_binds_to_exact_turn_and_cannot_bleed_into_other_tools(self):
+        from tools.approval_context import set_current_observability_context, reset_current_observability_context
+        payload={'action':'send','request_id':'12345678-1234-4234-8234-123456789abc',
+                 'session_key':'owner-session','message':'Research this setup.','research':True,
+                 'study_context':{'study_brief':'Inspect actual source.',
+                                  'previous_study':{'latest_completed_answer':{'text':'Evidence '*40000+'END'},'conversation_id':'private-study-id'}}}
+        self.requests.dispatch(payload)
+        self.assertEqual(self.bind(self.inject.call_args.args[0])['context'],'')
+        tokens=set_current_observability_context(session_id='native-owner',turn_id='turn-one')
+        try:
+            copied=self.policy.handler_study_context('native-owner')
+            self.assertEqual(copied,payload['study_context'])
+            copied['previous_study']['conversation_id']='changed'
+            self.assertEqual(self.policy.handler_study_context('native-owner')['previous_study']['conversation_id'],'private-study-id')
+            self.assertIsNone(self.policy.handler_study_context('another-session'))
+        finally:
+            reset_current_observability_context(tokens)
+        self.assertIsNone(self.policy.handler_study_context('native-owner'))

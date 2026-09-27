@@ -2,12 +2,14 @@
 import {fileURLToPath} from 'node:url';
 import {NativeHermesChatClient} from '../ds4-gateway/genie-native-chat.mjs';
 import {NativeDashboardChat} from '../ds4-gateway/genie-native-dashboard.mjs';
+import {STUDY_PROMPT,STUDY_INSTRUCTIONS} from '../ds4-gateway/genie-study.mjs';
 import {createDashboard} from '../ds4-gateway/dashboard.mjs';
 import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import net from 'node:net';import {spawn,execFileSync} from 'node:child_process';import assert from 'node:assert/strict';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),source=process.argv[2];
 if(!source||!path.isAbsolute(source)||!fs.existsSync(path.join(source,'.venv/bin/python')))throw Error('Provide the absolute installed native Hermes source directory');
 const home=fs.mkdtempSync('/tmp/dsg-hermes-fixture-');fs.chmodSync(home,0o700);let child,dashboardServer,modelCalls=0,toolCalls=0;let holdNextModel=false,heldModel=false,releaseModel;const serverErrors=[],telegramCalls=[],fakeToken='999999:fixture-not-a-real-bot-token';let updates=[{update_id:100,message:{message_id:101,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private',first_name:'Fixture'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Read the existing fixture action status.'}}];const key='native-fixture-key-0123456789abcdef',token='native-bridge-fixture-0123456789';
 let researchCalls=0;
+let dashboardFacade;const studyInputs=[],studyAnswer='Full retained finding. '.repeat(1600)+'END_OF_FULL_STUDY_EVIDENCE';
 execFileSync(source+'/.venv/bin/python',['-B',repo+'/ds4-gateway/genie_native_identity.py','--source-home',repo+'/genie','--home',home],{stdio:['ignore','pipe','pipe']});
 const migratedId='11111111-1111-4111-8111-111111111111';
 const legacySource=home+'/legacy-input',migrationBundle=home+'/history-staging';fs.mkdirSync(legacySource,{mode:0o700});
@@ -38,10 +40,12 @@ if(holdNextModel){holdNextModel=false;heldModel=true;await new Promise(resolve=>
 fs.appendFileSync(home+'/model-requests.jsonl',JSON.stringify({roles:body.messages?.map(m=>m.role),tools:body.tools?.map(t=>t.function?.name),last:body.messages?.at(-1)})+'\n',{mode:0o600});
 const hasReceipt=JSON.stringify(body.messages).includes('native-gateway-tool-receipt');
 const latestUser=body.messages?.findLastIndex(m=>m.role==='user'),policyQuestion=String(body.messages?.[latestUser]?.content).includes('Preserved before Stop:');
+const isStudyQuestion=!isTitleRequest&&String(body.messages?.[latestUser]?.content).includes(STUDY_PROMPT);
+if(isStudyQuestion)studyInputs.push(body.messages[latestUser].content);
 const policyToolDone=body.messages?.slice(latestUser+1).some(m=>m.role==='tool');
 const shouldCall=Boolean(body.tools?.length)&&(policyQuestion?!policyToolDone:!hasReceipt);
 const tool=policyQuestion?{name:'stargate_web_search',arguments:{query:'Public fixture documentation'}}:{name:'fleet_power_status',arguments:{action_id:'12345678-1234-4234-8234-123456789012'}};
-const message=shouldCall?{role:'assistant',content:null,tool_calls:[{id:'native-tool-1',type:'function',function:{name:'tool_call',arguments:JSON.stringify(tool)}}]}:{role:'assistant',content:'Native Hermes gateway executed the enrolled tool.'};
+const message=shouldCall?{role:'assistant',content:null,tool_calls:[{id:'native-tool-1',type:'function',function:{name:'tool_call',arguments:JSON.stringify(tool)}}]}:{role:'assistant',content:isStudyQuestion?studyAnswer:'Native Hermes gateway executed the enrolled tool.'};
 
 if(body.stream){res.setHeader('Content-Type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:shouldCall?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');}else res.end(JSON.stringify({id:'fixture',model:'fixture',choices:[{message,finish_reason:shouldCall?'tool_calls':'stop'}]}));
 }catch(error){serverErrors.push(error.message);res.statusCode=500;res.end(JSON.stringify({error:'Fixture protocol assertion failed'}));}});});await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
@@ -174,7 +178,7 @@ assert.ok(heldModel,'Stop fixture reached the held native provider');
 const stoppable=await nativeChat.session(migratedId);
 const startDashboard=async()=>{
  const client=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:migratedId,session_key:stoppable.session_key}]});
- const facade=new NativeDashboardChat({client,info:()=>({research_available:true})});
+ const facade=new NativeDashboardChat({client,info:()=>({research_available:true}),directory:home+'/dashboard-state'});dashboardFacade=facade;
  dashboardServer=createDashboard(()=>({}),undefined,null,null,null,null,null,null,facade);
  await new Promise(r=>dashboardServer.listen(0,'127.0.0.1',r));
  const url='http://127.0.0.1:'+dashboardServer.address().port;
@@ -239,7 +243,24 @@ write('native-stop-transcript.json',continued);
 const viaDashboard=await dashboardRequest({action:'new'});assert.equal(viaDashboard.status,201);
 assert.equal(viaDashboard.body.messages.length,0);assert.equal(viaDashboard.body.history_complete,true);
 assert.ok((await reconstructed.discover()).some(c=>c.id===viaDashboard.body.id),'HTTP-created conversation is owned and rediscovered by native Hermes');
-const result={native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+let lastStudy;
+for(const requestId of ['55555555-5555-4555-8555-555555555555','66666666-6666-4666-8666-666666666666']){
+ await dashboardFacade.refresh();const revision=dashboardFacade.study.status().revision;
+ const submittedStudy=await dashboardRequest({action:'study-start',expected_revision:revision,request_id:requestId});
+ assert.equal(submittedStudy.status,200,JSON.stringify(submittedStudy));
+ for(let i=0;i<100;i++){await dashboardFacade.refresh();lastStudy=dashboardFacade.study.status();if(lastStudy.last_run?.state==='complete')break;await new Promise(r=>setTimeout(r,100));}
+ assert.equal(lastStudy.last_run.state,'complete');
+ assert.equal((await dashboardRequest({action:'study-start',expected_revision:revision,request_id:requestId})).status,200,'Same scheduled-study identity reconciles without another dispatch');
+}
+assert.ok(studyInputs.every(value=>value.includes(STUDY_INSTRUCTIONS)),'The complete existing study brief reaches native model input');
+assert.ok(studyInputs.some(value=>value.includes(studyAnswer)),'Full previous answer longer than the native hook spill threshold reaches the next study');
+assert.equal(missingNativePolicy,0,'Study context preserves the complete native operating guide on every operational call');
+assert.equal(studyInputs.length,4,'Both native studies and their tool continuations carry their full study input');
+const studyView=await nativeChat.read(lastStudy.last_run.conversation_id,{all:true}).catch(async()=>{await nativeChat.discover();return nativeChat.read(lastStudy.last_run.conversation_id,{all:true});});
+assert.equal(studyView.messages[0].text,STUDY_PROMPT,'Display shows the exact original question while native input retains its full study context');
+assert.equal(studyView.messages[1].context.previous_study.latest_completed_answer.text,studyAnswer);
+write('native-study-transcript.json',studyView);
+const result={native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===4&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{if(dashboardServer){dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));}releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}

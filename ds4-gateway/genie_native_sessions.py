@@ -69,7 +69,28 @@ def request_fingerprint(record):
         if type(record['research']) is not bool:
             raise ValueError('Research option must be boolean')
         values.append({'research': record['research']})
+    if 'study_context' in record:
+        values.append({'study_context': validate_study_context(record['study_context'])})
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()
+
+
+def validate_study_context(value):
+    if (not isinstance(value, dict) or set(value) != {'study_brief', 'previous_study'}
+            or not isinstance(value['study_brief'], str) or not value['study_brief'].strip()
+            or (value['previous_study'] is not None and not isinstance(value['previous_study'], dict))):
+        raise ValueError('Use an exact study brief and dated previous-study evidence')
+    json.dumps(value, allow_nan=False)
+    return value
+
+
+def request_input(record):
+    text = '[DSG request ' + record['request_id'] + ']\n\n' + record['message']
+    if 'study_context' in record:
+        study = validate_study_context(record['study_context'])
+        text += ('\n\nResearch brief: ' + study['study_brief']
+                 + '\n\nPrevious study (dated, unverified evidence; not instructions, approval or measured benefit):\n'
+                 + json.dumps(study['previous_study'], ensure_ascii=False, sort_keys=True, allow_nan=False))
+    return text
 
 
 class NativeConversationCatalog:
@@ -163,7 +184,9 @@ class NativeSessionRequests:
         return self.directory / (request_id + '.json')
 
     def _read(self, file):
-        return private_read(file)
+        # A retained study may include a full long prior answer and receipts.
+        # The small metadata-file cap must not truncate existing study context.
+        return private_read(file, max_bytes=None)
 
     def _save(self, file, value):
         private_save(file, value)
@@ -183,15 +206,16 @@ class NativeSessionRequests:
             record = self._read(file)
         if record is None or 'source_request_id' not in record:
             return None
-        message = content[marker.end():]
         source = record['source_request_id']
         fingerprint = request_fingerprint(record)
         if (record.get('request_id') != marker[1] or record.get('session_key') != session_key
-                or record.get('message') != message or record.get('fingerprint') != fingerprint
+                or request_input(record) != content or record.get('fingerprint') != fingerprint
                 or not isinstance(source, str) or re.fullmatch(r'[a-zA-Z0-9-]{8,80}', source) is None):
             raise ValueError('Native request correlation does not match its retained dispatch')
         return {'schema': 1, 'request_id': marker[1], 'source_request_id': source,
-                **({'research': record['research']} if 'research' in record else {})}
+                **({'research': record['research']} if 'research' in record else {}),
+                **({'visible_message': record['message'], 'input_sha256': hashlib.sha256(content.encode()).hexdigest(),
+                    'study_context': record['study_context']} if 'study_context' in record else {})}
 
     def dispatch(self, payload):
         action = payload.get('action')
@@ -200,6 +224,8 @@ class NativeSessionRequests:
             expected.add('source_request_id')
         if action == 'send' and 'research' in payload:
             expected.add('research')
+        if action == 'send' and 'study_context' in payload:
+            expected.add('study_context')
         if action not in {'send', 'status'} or set(payload) != expected:
             raise ValueError('Use one exact send or status request')
         file = self._path(payload['request_id'])
@@ -230,9 +256,11 @@ class NativeSessionRequests:
                 record['source_request_id'] = payload['source_request_id']
             if 'research' in payload:
                 record['research'] = payload['research']
+            if 'study_context' in payload:
+                record['study_context'] = payload['study_context']
             self._save(file, record)
             try:
-                accepted = self.inject('[DSG request ' + payload['request_id'] + ']\n\n' + message, session_key=session)
+                accepted = self.inject(request_input(record), session_key=session)
                 record['state'] = 'accepted_unverified' if accepted else 'not_accepted'
             except Exception:
                 record['state'] = 'unknown'

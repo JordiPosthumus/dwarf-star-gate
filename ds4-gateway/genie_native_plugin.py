@@ -122,6 +122,11 @@ def register(ctx):
                 if reason:
                     return json.dumps({'error': reason})
             current = bridge_snapshot(descriptor)
+            study = policy.handler_study_context(session_id)
+            if study is not None:
+                # Retain the previous-study private-query guard while using
+                # fresh fleet evidence for all other tool context.
+                current = {**current, 'context': {**current['context'], **study}}
             tools = catalogue(current, emit)
             if name not in tools or tools[name]['section'] not in current.get('enabled_sections', []):
                 return json.dumps({'error': 'This DSG capability is currently unavailable. No action was issued.'})

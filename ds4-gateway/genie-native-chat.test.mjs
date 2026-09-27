@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import {createHash} from 'node:crypto';
 import {studyEvidence} from './genie-study.mjs';
 import {NativeHermesChatClient,nativeRequestId,projectNativeConversation,readNativeGatewayDescriptor} from './genie-native-chat.mjs';
 
@@ -53,6 +54,16 @@ test('native history recovers the original study request identity and rejects mi
   for(const change of [{source_request_id:'another-request'},{request_id:nativeRequestId('other',source)},{schema:2}])
     assert.throws(()=>project({...row,dsg_request:{...row.dsg_request,...change}}),/correlation/);
   const {dsg_request,...legacy}=row;assert.equal(project(legacy).request_id,native,'Existing uncorrelated receipts retain their native identity');
+});
+
+test('study display retains the original question and full prior evidence under its exact native input hash',()=>{
+  const id='conversation',request='study-request-12345',native=nativeRequestId(id,request),text=`[DSG request ${native}]\n\nOriginal question\n\nResearch brief and full prior evidence`;
+  const context={study_brief:'Read the source',previous_study:{latest_completed_answer:{text:'Prior answer '.repeat(30000)}}};
+  const user={id:1,role:'user',timestamp:100,content:text,dsg_request:{schema:1,request_id:native,source_request_id:request,
+    visible_message:'Original question',study_context:context,input_sha256:createHash('sha256').update(text).digest('hex')}};
+  const project=u=>projectNativeConversation({id,session:observed,messages:[u,{id:2,role:'assistant',content:'Answer',timestamp:101,finish_reason:'stop'}]});
+  const view=project(user);assert.equal(view.messages[0].text,'Original question');assert.deepEqual(view.messages[1].context,context);
+  assert.throws(()=>project({...user,content:text+' altered'}),/retained display evidence/);
 });
 
 async function fixture(t){

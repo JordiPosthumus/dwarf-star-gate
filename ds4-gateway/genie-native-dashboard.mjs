@@ -1,8 +1,11 @@
 // Dashboard projection and input adapter. Native Hermes remains the sole
 // transcript, scheduler and owner of pending questions. No production backend
-// selects this facade until submission, research and watcher migration is ready.
+// selects this facade until full profile, watcher and channel migration is verified.
 import {createHash,randomUUID} from 'node:crypto';
 import {nativeRequestId} from './genie-native-chat.mjs';
+import fs from 'node:fs';
+import {STUDY_INSTRUCTIONS} from './genie-study.mjs';
+import {NativeGenieStudy} from './genie-native-study.mjs';
 
 const digest=value=>createHash('sha256').update(value).digest('hex');
 export const nativeReplyId=(id,turn)=>`native-turn-${digest(JSON.stringify([id,turn]))}`;
@@ -41,11 +44,13 @@ export function nativeDashboardView(conversation,previous,now=Date.now()){
 }
 
 export class NativeDashboardChat{
-  constructor({client,now=Date.now,isSuspended=()=>false,maxAgeMs=15000,info=()=>({})}){
+  constructor({client,now=Date.now,isSuspended=()=>false,maxAgeMs=15000,info=()=>({}),directory}){
     this.client=client;this.now=now;this.isSuspended=isSuspended;this.maxAgeMs=maxAgeMs;
     this.info=info;
     this.sessions=new Map();this.observed=new Map();this.failures=new Set();this.closed=false;
     this.refreshing=null;this.catalogueObserved=false;
+    this.directory=directory;this.provider={get info(){return info();}};
+    if(directory){fs.mkdirSync(directory,{recursive:true,mode:0o700});this.study=new NativeGenieStudy(this,{now});}
   }
   async refresh(id){
     // Serial observations prevent a slower earlier read replacing fresher state.
@@ -72,10 +77,11 @@ export class NativeDashboardChat{
   }
   fresh(id){return !this.closed&&!this.failures.has('*')&&!this.failures.has(id)&&this.observed.has(id)&&this.now()-this.observed.get(id)>=0&&this.now()-this.observed.get(id)<=this.maxAgeMs;}
   get(id){if(!this.fresh(id)||!this.sessions.has(id))throw unavailable();return structuredClone(this.sessions.get(id));}
+  observationAvailable(){return !this.closed&&this.catalogueObserved&&!this.failures.has('*')&&[...this.client.bindings.keys()].every(id=>this.fresh(id));}
   status(){
-    const fresh=this.catalogueObserved&&!this.failures.has('*')&&[...this.client.bindings.keys()].every(id=>this.fresh(id));
+    const fresh=this.observationAvailable();
     return {...this.info(),engine:'Hermes',mode:'native',available:!this.closed&&fresh&&!this.isSuspended(),suspended:this.isSuspended(),
-      stop_reply_supported:true,native_observation_available:fresh,unreadable_conversations:[...this.failures],
+      stop_reply_supported:true,native_observation_available:fresh,unreadable_conversations:[...this.failures],...(this.study?{study:this.study.status()}:{}),
       conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(c=>({id:c.id,title:c.title,updated_at:c.updated_at,
         busy:this.fresh(c.id)?c.busy:null,queued:this.fresh(c.id)?c.queued:null,queue_paused:c.queue_paused,observation_available:this.fresh(c.id)}))};
   }
@@ -91,9 +97,7 @@ export class NativeDashboardChat{
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Enter a message of up to 32,000 characters.');
     if(research!==undefined&&typeof research!=='boolean')throw Error('Research option must be boolean.');
     const identity=nativeRequestId(id,requestId),binding=this.client.binding(id);
-    // Do not accidentally run a setup study without its brief and dated prior
-    // evidence while that integration is still staged separately.
-    if(binding.purpose==='setup_research')throw Error('Native setup-study submission is not connected yet.');
+    if(binding.purpose==='setup_research'&&!this.study)throw Error('Native setup-study submission is not connected yet.');
     let receipt=await this.client.receipt(id,requestId);
     if(receipt?.request_id!==identity)throw Error('Native dispatch identity could not be verified. Do not replay the question.');
     const absent=receipt.state==='unknown'&&Object.keys(receipt).sort().join(',')==='request_id,state';
@@ -101,9 +105,15 @@ export class NativeDashboardChat{
       const available=this.info().research_available===true;
       research??=available;
       if(research&&!available)throw Error('Web research is not configured or enabled for this installation.');
+      let studyContext;
+      if(binding.purpose==='setup_research'){
+        await this.refresh();
+        if(!this.observationAvailable())throw unavailable();
+        studyContext={study_brief:STUDY_INSTRUCTIONS,previous_study:this.study.previousStudy(id)};
+      }
       // Native Hermes persists this exact intent before admitting it. Never
       // retry this POST automatically when its acknowledgment is lost.
-      receipt=await this.client.submit(id,text.trim(),requestId,{research});
+      receipt=await this.client.submit(id,text.trim(),requestId,{research,...(studyContext?{studyContext}:{})});
     }
     if(receipt?.request_id!==identity||receipt.source_request_id!==requestId||receipt.session_key!==binding.session_key||receipt.message!==text.trim()||
       (research!==undefined&&receipt.research!==research))throw Error('That request identity belongs to different input. No new question was sent.');
@@ -115,6 +125,7 @@ export class NativeDashboardChat{
     return {...view,native_submission:{request_id:requestId,native_request_id:identity,state:receipt.state,
       observed_in_history:view.messages.some(m=>m.role==='user'&&m.request_id===requestId)}};
   }
+  async tick(){await this.study?.tick();}
   async stop(id,replyId){
     await this.refresh(id);const conversation=this.get(id);
     if(conversation.queue_paused===replyId&&conversation.native_hold?.state==='held')return conversation;
