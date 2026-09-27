@@ -499,6 +499,32 @@ print(json.dumps(result))
                 'scope':'Current serving identity and recipe backup only. No candidate image, inference or lifecycle change.'}
         write(self.root/'prepared.json',result);return result
 
+    def inspect_serving(self):
+        """Diagnose an existing backup without inference, writes or lifecycle work."""
+        if self.plan.get('qualification_mode')!='serving-only':
+            raise RuntimeError('Serving inspection requires a current-serving plan')
+        file=self.backup/'serving.json'
+        if any(p.is_symlink() for p in [file,*file.parents]) or not file.is_file() or file.stat().st_size>1048576:
+            raise RuntimeError('No bounded regular serving backup is available')
+        before=json.loads(file.read_text())
+        observations=[]
+        for _ in range(2):
+            current=self.serving_snapshot()
+            changes=[]
+            for member in ['head','rank']:
+                for key in ['Id','Image','Config','HostConfig','Mounts','started_at','launcher_sha256']:
+                    old,new=before[member][key],current[member][key]
+                    if old==new:continue
+                    encode=lambda value:json.dumps(value,sort_keys=True,separators=(',',':')).encode()
+                    row={'member':member,'field':key,'before_sha256':hashlib.sha256(encode(old)).hexdigest(),
+                         'current_sha256':hashlib.sha256(encode(new)).hexdigest()}
+                    if key=='Mounts':
+                        row['order_only']=sorted(encode(m) for m in old)==sorted(encode(m) for m in new)
+                    changes.append(row)
+            observations.append({'observed_at':time.time(),'matches_backup':not changes,'differences':changes})
+        return {'state':'inspected','trial_id':self.plan['trial_id'],'observations':observations,
+                'scope':'Two read-only comparisons against the original serving backup. Field names and hashes only; no configuration values, inference, hold, restart, repair or qualification. An order-only diagnostic does not relax the equality guard.'}
+
     def run_serving(self):
         prepared=json.loads((self.root/'prepared.json').read_text())
         if prepared.get('qualification_mode')!='serving-only' or prepared.get('serving_sha256')!=sha(self.backup/'serving.json'):
@@ -648,6 +674,7 @@ if __name__=='__main__':
     signal.signal(signal.SIGHUP,signal.SIG_IGN)
     action,encoded=sys.argv[1:];plan=json.loads(base64.b64decode(encoded));runner=Remote(plan)
     if action=='idle':result={'idle':runner.idle()}
+    elif action=='inspect_serving':result=runner.inspect_serving()
     elif action in ['prepare','run','deploy','rollout_preflight','rollback']:
         with open(runner.root/'operation.lock','a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

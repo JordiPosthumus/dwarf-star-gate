@@ -168,3 +168,12 @@ upgrade of a published recipe can use `baseline_kind: "published-rollout"` with
 the SHA-256 of its retained deployment receipt in `baseline_deployment_sha256`;
 the executor verifies the image, source receipt and complete backed-up recipe
 manifest instead of pretending that a published archive is a Git checkout.
+
+For a terminal `serving-only` preparation, Genie may invoke `fleet_recipe_trial`
+with `stage: "inspect"` and the same profile/trial ID. This preserves the failed
+preparation and saves a separate diagnostic receipt. It compares the exact native
+backup to two fresh observations and reports differing fields and hashes, with
+mount-order-only differences labelled explicitly. No environment values, inference,
+maintenance hold, model restart or repair are involved. The comparison guard is
+unchanged. Inspection is deduplicated: repeated calls return the original dated
+receipt, not a new observation. A diagnostic is neither preparation nor qualification.

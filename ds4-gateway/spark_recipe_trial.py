@@ -144,16 +144,17 @@ class Executor:
     def execute(self,stage):
         file=self.folder/(stage+'.status.json');self.receipt=json.loads(file.read_text())
         try:
-            result=self.prepare() if stage=='prepare' else self.measure()
+            result=({'state':'complete','result':self.remote_action('inspect_serving',timeout=60)} if stage=='inspect'
+                    else self.prepare() if stage=='prepare' else self.measure())
             self.receipt.update(result,finished_at=time.time())
         except Exception as error:
-            self.receipt.update(state='failed' if stage=='prepare' else 'restoration_required',error=str(error),finished_at=time.time())
+            self.receipt.update(state='failed' if stage in ('prepare','inspect') else 'restoration_required',error=str(error),finished_at=time.time())
         atomic(file,self.receipt)
         return self.receipt
 
 
 if __name__=='__main__':
     stage,folder,socket=sys.argv[1:]
-    if stage not in ('prepare','run'):raise SystemExit('Invalid stage')
+    if stage not in ('prepare','run','inspect'):raise SystemExit('Invalid stage')
     result=Executor(folder,GatewayControl(socket)).execute(stage)
     print(json.dumps({'state':result['state'],'phase':result.get('phase')}),flush=True)

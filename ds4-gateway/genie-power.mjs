@@ -78,7 +78,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     }
     if(input?.action==='recipe-trial'){
       if(Object.keys(input).sort().join(',')!=='action,profile,stage,trial_id'||!recipes)throw Error('Use an enrolled recipe trial profile and stage');
-      if(!['prepare','run'].includes(input.stage))throw Error('Trials only support prepare/run; permanent rollout uses its own enrolled action');
+      if(!['prepare','run','inspect'].includes(input.stage))throw Error('Trials only support prepare/run/inspect; permanent rollout uses its own enrolled action');
       if(isTesting()||!isEnabled())throw Error('Recipe trials are suspended or fleet power is switched off');
       return recipes.start(input);
     }

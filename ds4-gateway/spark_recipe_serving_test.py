@@ -14,7 +14,7 @@ from operation_maintenance_test import Fixture
 class CurrentServingQualification(unittest.TestCase):
     def setUp(self):
         tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
-        self.root=Path(tmp.name);recipe=self.root/'recipe';recipe.mkdir()
+        self.root=Path(tmp.name).resolve();recipe=self.root/'recipe';recipe.mkdir()
         (recipe/'.env').write_text('MAX_MODEL_LEN=400000\nMAX_NUM_SEQS=2\n')
         (recipe/'start.sh').write_text('# unchanged fixture launcher\n')
         self.plan={'schema':1,'kind':'glm53-spark-pair-long-coding','qualification_mode':'serving-only',
@@ -59,6 +59,33 @@ class CurrentServingQualification(unittest.TestCase):
         self.assertTrue(self.commands);self.assertTrue(all(command[0]=='cat' for command in self.commands))
         with self.assertRaisesRegex(RuntimeError,'already submitted'):self.remote.run()
         self.assertEqual(self.events.count(('current',400000)),1)
+
+    def test_read_only_diagnostic_distinguishes_mount_order_from_real_changes(self):
+        for c in self.containers.values():
+            c['Mounts'].append({'Type':'bind','Source':'/private/models','Destination':'/models','RW':False})
+        self.remote.prepare()
+        before={str(p.relative_to(self.root)):p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        self.containers['head']['Mounts'].reverse()
+        self.containers['rank']['HostConfig']['ShmSize']=4096
+        self.containers['rank']['Config']['Env'].append('PRIVATE_TOKEN=must-not-appear')
+        result=self.remote.inspect_serving()
+        for observation in result['observations']:
+            rows={(r['member'],r['field']):r for r in observation['differences']}
+            self.assertTrue(rows['head','Mounts']['order_only'])
+            self.assertIn(('rank','HostConfig'),rows)
+            self.assertIn(('rank','Config'),rows)
+        self.assertNotIn('must-not-appear',json.dumps(result))
+        self.assertNotIn('/private/models',json.dumps(result))
+        self.assertEqual(before,{str(p.relative_to(self.root)):p.read_bytes() for p in self.root.rglob('*') if p.is_file()})
+        self.assertFalse(any(isinstance(e,tuple) for e in self.events),'no inference or lifecycle work')
+        with self.assertRaisesRegex(RuntimeError,'changed since preparation'):self.remote.run()
+
+    def test_diagnostic_refuses_missing_or_symlink_backup(self):
+        with self.assertRaisesRegex(RuntimeError,'regular serving backup'):self.remote.inspect_serving()
+        self.remote.prepare()
+        file=self.remote.backup/'serving.json';saved=file.read_bytes();file.unlink()
+        target=self.root/'elsewhere.json';target.write_bytes(saved);file.symlink_to(target)
+        with self.assertRaisesRegex(RuntimeError,'regular serving backup'):self.remote.inspect_serving()
 
     def test_missing_cache_boundary_or_concurrency_evidence_cannot_pass(self):
         for label,key in [('arithmetic','passed'),('cold-A','cold_cache_proved'),('cold-B','cold_cache_proved'),
