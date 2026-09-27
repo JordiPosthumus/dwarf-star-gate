@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 const sections={
   inspection:['read_server_configuration','inspect_server','read_server_artifact'],
   research:['stargate_web_search','stargate_web_extract'],
-  spark_setup:['repair_spark_connection','spark_connection_status','request_spark_access','bootstrap_spark_access','spark_access_status','discover_sparks','spark_discovery_status','resume_spark_preparation','enroll_spark','enroll_discovered_spark','qualify_spark_media','setup_spark','spark_setup_status','prepare_spark','qualify_spark_llm','register_spark_llm'],
+  spark_setup:['inspect_spark_connection','repair_spark_connection','spark_connection_status','request_spark_access','bootstrap_spark_access','spark_access_status','discover_sparks','spark_discovery_status','resume_spark_preparation','enroll_spark','enroll_discovered_spark','qualify_spark_media','setup_spark','spark_setup_status','prepare_spark','qualify_spark_llm','register_spark_llm'],
   recovery:['recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery','qualify_omlx_recovery','enroll_omlx_recovery'],
   power:['fleet_power_status','inspect_fleet_service','fleet_power','fleet_routing','fleet_recipe_trial','fleet_recipe_rollout'],
   media:['media_job_status','start_media_job','inspect_media_host','inspect_media_inputs','setup_media_host','repair_media_setup','audit_media_standard'],

@@ -221,3 +221,12 @@ test('migrated history preserves failed/interrupted messages and original domain
  assert.throws(()=>projectNativeConversation({id:'another-conversation',session:observed,messages:imported}),/inconsistent/);
  assert.throws(()=>projectNativeConversation({id,session:observed,messages:[{...imported[1],content:'Changed text'}]}),/inconsistent/);
 });
+
+
+test('native connection diagnosis stays an observation with its unresolved cause',()=>{
+ const view=projectNativeConversation({id:'conversation',session:observed,messages:[
+  {id:1,role:'assistant',timestamp:100,content:'',tool_calls:[{id:'diagnosis',function:{name:'inspect_spark_connection',arguments:'{"connection":"FixtureSpark"}'}}]},
+  {id:2,role:'tool',timestamp:101,tool_call_id:'diagnosis',content:JSON.stringify({state:'observed',connection_state:'authentication_unavailable',cause:'undetermined',physical_access_required:null})}]});
+ assert.equal(view.messages[0].spark_setup.events[0].result.cause,'undetermined');
+ assert.equal(view.messages[0].spark_setup.events[0].result.physical_access_required,null);
+});
