@@ -3,7 +3,13 @@ const fields={provider:$('brain-provider'),base_url:$('brain-endpoint'),model:$(
 let loaded=null,busy=false;
 const draft=()=>Object.fromEntries(Object.entries(fields).map(([key,node])=>[key,node.value]));
 const dirty=()=>loaded&&JSON.stringify(draft())!==JSON.stringify(Object.fromEntries(Object.keys(fields).map(key=>[key,loaded.settings[key]??''])));
+function setField(key,value){
+  const field=fields[key];
+  if(key==='reasoning'&&![...field.options].some(option=>option.value===value))field.add(new Option(value,value));
+  field.value=value;
+}
 function controls(){
+  $('brain-reasoning-saved').textContent=loaded?`Saved · ${loaded.settings.reasoning||'Provider default'}`:'Reading saved setting…';
   $('brain-save').disabled=busy||!loaded||!dirty();$('brain-test').disabled=busy||!loaded;
   $('brain-reload').disabled=busy;$('brain-dirty').textContent=dirty()?'Unsaved changes':'';
   for(const field of Object.values(fields))field.disabled=!loaded;
@@ -20,7 +26,7 @@ async function request(url,method,input){
 async function load(){
   if(busy||dirty()&&!confirm('Discard your unsaved brain settings and reload from disk?'))return;
   busy=true;controls();
-  try{loaded=await request('/api/brain','GET');for(const [key,field] of Object.entries(fields))field.value=loaded.settings[key]??'';
+  try{loaded=await request('/api/brain','GET');for(const key of Object.keys(fields))setField(key,loaded.settings[key]??'');
     $('brain-path').textContent=loaded.path;runtime(loaded.runtime);$('brain-message').textContent='Using native Hermes settings.';
   }catch(error){$('brain-message').textContent=error.message;}finally{busy=false;controls();}
 }
@@ -29,7 +35,7 @@ $('brain-reload').addEventListener('click',()=>void load());
 $('brain-form').addEventListener('submit',async event=>{
   event.preventDefault();if(busy||!dirty())return;
   const submitted=draft();busy=true;controls();$('brain-message').textContent='Saving…';
-  try{loaded=await request('/api/brain','PUT',{settings:submitted,revision:loaded.revision});for(const [key,field] of Object.entries(fields))if(field.value===submitted[key])field.value=loaded.settings[key]??'';runtime(loaded.runtime);$('brain-message').textContent='Saved to native Hermes. His current turn has not been interrupted.';}
+  try{loaded=await request('/api/brain','PUT',{settings:submitted,revision:loaded.revision});for(const [key,field] of Object.entries(fields))if(field.value===submitted[key])setField(key,loaded.settings[key]??'');runtime(loaded.runtime);$('brain-message').textContent='Saved to native Hermes. His current turn has not been interrupted.';}
   catch(error){$('brain-message').textContent=error.name==='TimeoutError'?'Save reply timed out. Reload saved settings to check the result before retrying. Your draft is retained.':error.message;}
   finally{busy=false;controls();}
 });
