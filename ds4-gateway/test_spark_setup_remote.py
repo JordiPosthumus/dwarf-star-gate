@@ -26,18 +26,103 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_native_standard_audit_preserves_services_and_distinguishes_absence_from_changed(self):
+        llm, media = 'a'*64, 'b'*64
+        expected = {'container':media, 'image':'sha256:'+'c'*64, 'kind':'comfyui', 'port':8188}
+        payload = {'engine':'h3','expected':expected,'llm_container':'serving-llm'}
+        for mode in ('present','absent','changed','unavailable','incomplete'):
+            commands=[]
+            def read(args, **kwargs):
+                commands.append(args)
+                if mode=='unavailable':raise OSError('SSH unavailable')
+                if args[1]=='ps':return llm if mode=='absent' else ('not-an-id' if mode=='incomplete' else llm+'\n'+media)
+                if args[-1]=='serving-llm':return json.dumps([{'Id':llm}])
+                return json.dumps([{'Id':media,'Image':expected['image'] if mode=='present' else 'sha256:'+'d'*64,'State':{'Running':False},'HostConfig':{'PortBindings':{'8188/tcp':[{'HostPort':'8188'}]}}}])
+            with self.subTest(mode=mode),patch.object(remote.subprocess,'check_output',side_effect=read):
+                if mode in ('unavailable','incomplete'):
+                    with self.assertRaises((OSError,ValueError)):remote.audit_media(payload)
+                else:self.assertEqual(remote.audit_media(payload)['state'],mode)
+            self.assertTrue(all(c[0]=='docker' and c[1] in ('ps','inspect') for c in commands))
+
+    def test_missing_media_discovery_is_read_only_and_refuses_ambiguous_or_active_sources(self):
+        current, old, candidate = 'a'*64, 'b'*64, 'c'*64
+        request = {'engine':'h3', 'missing_container':old, 'llm_container':current}
+        base = {'Id':candidate, 'Image':'sha256:'+'d'*64, 'State':{'Running':False},
+                'Config':{'Cmd':['python','main.py'], 'WorkingDir':'/opt/ComfyUI'},
+                'HostConfig':{'PortBindings':{'8188/tcp':[{'HostIp':'127.0.0.1','HostPort':'8188'}]}}}
+        dockerfile = (Path(__file__).parents[1]/'examples/spark-build/h3/Dockerfile').read_text()
+        shipped_entrypoint = json.loads(next(line.removeprefix('ENTRYPOINT ') for line in dockerfile.splitlines() if line.startswith('ENTRYPOINT ')))
+        for mode in ('known','wrapper','wrapper-direct','wrapper-argument','wrapper-shell','wrapper-wrong-directory','fresh','unknown','active','old-present','many','wrong-llm','ambiguous','host-network'):
+            with self.subTest(mode=mode):
+                commands=[]
+                obj=json.loads(json.dumps(base))
+                if mode=='unknown':obj['Config']['Cmd']=['unrecognized']
+                if mode.startswith('wrapper'):
+                    obj['Config']={'WorkingDir':'/opt/ComfyUI','Entrypoint':shipped_entrypoint,'Cmd':['--listen','0.0.0.0']}
+                    if mode=='wrapper-direct':obj['Config']['Entrypoint']=['/usr/local/bin/h3-entrypoint']
+                    if mode=='wrapper-argument':obj['Config'].update(Entrypoint=['echo'],Cmd=['/usr/local/bin/h3-entrypoint'])
+                    if mode=='wrapper-shell':obj['Config']['Entrypoint']=['sh','-c','/usr/local/bin/h3-entrypoint']
+                    if mode=='wrapper-wrong-directory':obj['Config']['WorkingDir']='/unrelated'
+                if mode=='active':obj['State']['Running']=True
+                if mode=='host-network':obj['HostConfig']['PortBindings']={}
+                ids=[current]+([] if mode=='fresh' else [candidate])
+                if mode=='old-present':ids.append(old)
+                if mode=='many':ids=[format(i,'064x') for i in range(129)]
+                def read(args, **kwargs):
+                    commands.append(args)
+                    if args[1]=='ps':return '\n'.join(ids)
+                    if args[1:5]!=['inspect','--type','container','--']:self.fail(str(args))
+                    if args[5:]==[current]:return json.dumps([{'Id':current,'State':{'Running':mode!='wrong-llm'}}])
+                    items=[{'Id':current,'State':{'Running':True}},obj]
+                    if mode=='ambiguous':items.append({**obj,'Id':'e'*64})
+                    return json.dumps(items)
+                with patch.object(remote.subprocess,'check_output',side_effect=read):
+                    if mode in ('known','wrapper','wrapper-direct','fresh'):
+                        result=remote.discover_media(request)
+                        self.assertEqual(result['selection'] is None,mode=='fresh')
+                        if mode!='fresh':self.assertEqual(result['selection']['container'],candidate)
+                        if mode in ('wrapper','wrapper-direct'):self.assertEqual(result['selection_launch_form'],'shipped_h3_wrapper')
+                    else:
+                        with self.assertRaises(ValueError):remote.discover_media(request)
+                self.assertTrue(all(c[0]=='docker' and c[1] in ('ps','inspect') for c in commands))
+
+    def test_existing_media_is_read_only_pinned_and_requires_idle_for_qualification(self):
+        expected = {'container': 'b'*64, 'image': 'sha256:'+'c'*64, 'kind': 'comfyui', 'port': 8188}
+        media = {'Id': expected['container'], 'Image': expected['image'], 'State': {'Running': False},
+                 'HostConfig': {'PortBindings': {'8188/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8188'}]}}}
+        llm = {'Id': 'a'*64, 'State': {'Running': False}}
+        request = {'engine': 'h3', 'expected': expected, 'llm_container': llm['Id'], 'require_idle': True}
+        calls = []
+        def observe(args, **kwargs):
+            calls.append(args)
+            if args[0] == 'nvidia-smi': return ''
+            self.assertEqual(args[:2], ['docker', 'inspect'])
+            return json.dumps([media if args[2] == media['Id'] else llm])
+        with patch.object(remote.subprocess, 'check_output', side_effect=observe):
+            result = remote.existing_media(request)
+            self.assertEqual(result['engines']['h3']['container'], media['Id'])
+            llm['State']['Running'] = True
+            with self.assertRaisesRegex(ValueError, 'active'): remote.existing_media(request)
+            self.assertEqual(remote.existing_media({**request, 'require_idle': False})['state'], 'prepared_stopped')
+            media['Image'] = 'sha256:'+'d'*64
+            with self.assertRaisesRegex(ValueError, 'identity'): remote.existing_media(request)
+        self.assertTrue(all(args[0] == 'nvidia-smi' or args[:2] == ['docker', 'inspect'] for args in calls))
+        with self.assertRaisesRegex(ValueError, 'Pin'): remote.existing_media({**request, 'expected': {**expected, 'command': 'arbitrary'}})
+
     def test_resume_keeps_partial_files_and_replays_observation_not_work(self):
         script = """import json,sys,time
 from pathlib import Path
 def preflight(): pass
+def save(root, value):
+ pending=root/'setup.json.tmp';pending.write_text(json.dumps(value));pending.replace(root/'setup.json')
 if __name__ == '__main__':
  root=Path(sys.argv[1]);root.mkdir(exist_ok=True)
  partial=root/'retained-download';partial.write_text('downloaded bytes') if not partial.exists() else None
  if not (root.parent/'allow-resume').exists():
-  (root/'setup.json').write_text(json.dumps({'state':'failed','error':'fixture download interrupted'}));sys.exit(7)
+  save(root,{'state':'failed','error':'fixture download interrupted'});sys.exit(7)
  assert partial.read_text()=='downloaded bytes'
  while not (root.parent/'finish').exists():time.sleep(.02)
- (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete'}))
+ save(root,{'state':'prepared_stopped','phase':'complete'})
 """
         def terminal(root):
             deadline=time.monotonic()+10
@@ -152,6 +237,22 @@ if __name__ == '__main__':
                 selected=remote.media_plan(root)
                 self.assertEqual(set(selected['engines']),{'h3'})
                 self.assertEqual(selected['llm_container'],'qwen38-repaired')
+                # A retained media preparation survives replacement/removal of its old LLM.
+                before = (root/'launch.json').read_bytes()
+                replacement = 'f'*64
+                containers[replacement] = {'Id':replacement,'State':{'Running':True}}
+                del containers['qwen38-repaired']
+                retained=remote.retained_media(root,{'require_idle':False,'llm_container':replacement,'engine':'h3'})
+                self.assertEqual(retained['source_llm_container'],'qwen38-repaired')
+                with self.assertRaisesRegex(ValueError,'Pin the current'):
+                    remote.retained_media(root,{'require_idle':False,'llm_container':None,'engine':'h3'})
+                self.assertEqual(retained['llm_container'],replacement)
+                self.assertEqual((root/'launch.json').read_bytes(),before)
+                with self.assertRaisesRegex(ValueError,'stopped state'):
+                    remote.media_plan(root,current_llm=replacement,engine='h3')
+                containers[replacement]['State']['Running']=False
+                self.assertEqual(remote.media_plan(root,current_llm=replacement,engine='h3')['llm_container'],replacement)
+                containers['qwen38-repaired']={'Id':'qwen38-repaired','State':{'Running':False}}
                 containers['h3']['HostConfig']['PortBindings']['8188/tcp'][0]['HostIp']='0.0.0.0'
                 with self.assertRaisesRegex(ValueError,'native port'): remote.media_plan(root)
 
@@ -190,11 +291,13 @@ if __name__ == '__main__':
         script = '''import json,sys,time
 from pathlib import Path
 def preflight(): pass
+def save(root, value):
+ pending=root/'setup.json.tmp';pending.write_text(json.dumps(value));pending.replace(root/'setup.json')
 if __name__ == '__main__':
  root=Path(sys.argv[1]);root.mkdir()
- (root/'setup.json').write_text(json.dumps({'state':'running','phase':'fixture'}))
+ save(root,{'state':'running','phase':'fixture'})
  while not (root.parent/'finish').exists(): time.sleep(.02)
- (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete','arguments':sys.argv[2:]}))
+ save(root,{'state':'prepared_stopped','phase':'complete','arguments':sys.argv[2:]})
 '''
         with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path, 'home', return_value=Path(tmp)), patch.object(remote.subprocess,'check_output',return_value=json.dumps([{'Id':'a'*64,'State':{'Running':False}}])):
             root = Path(tmp) / 'setup'

@@ -2,7 +2,7 @@ import {Transform,PassThrough} from 'node:stream';
 
 // Scan bytes, retaining only a bounded top-level key/model string. Prompts,
 // images and tool arguments pass through incrementally, without reserialization.
-export function modelAliasTransform(aliases,encoding) {
+export function modelAliasTransform(aliases,encoding,field='model') {
   aliases=Object.fromEntries(Object.entries(aliases).filter(([a,b])=>a!==b));
   // Opaque encoded uploads remain byte-identical. Alias translation requires JSON.
   if((encoding&&encoding!=='identity')||!Object.keys(aliases).length)return new PassThrough();
@@ -28,7 +28,7 @@ export function modelAliasTransform(aliases,encoding) {
         role=null;token=[];overflow=false;continue;
       }
       if(b===34){
-        inString=true;role=depth===1?(keyExpected?'key':key==='model'?'model':null):null;token=role?[b]:[];overflow=false;
+        inString=true;role=depth===1?(keyExpected?'key':key===field?'model':null):null;token=role?[b]:[];overflow=false;
         if(role==='model'){parts.push(chunk.subarray(start,i));start=i;}
       }else if(b===123||b===91){depth++;if(depth===1&&b===123)keyExpected=true;}
       else if(b===125||b===93)depth--;

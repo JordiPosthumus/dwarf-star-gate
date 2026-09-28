@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mediaInputRequirements,inspectMediaJobInputs} from './media-input-placement.mjs';
-import {createMediaTools} from './genie-media.mjs';
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,19 +31,4 @@ test('known local loaders are distinguished from portable uploads without classi
   const r=mediaInputRequirements(job);assert.equal(r.uploaded_inputs,1);
   assert.deepEqual(r.engine_local_files,[{node_id:'a',node_type:'LoadImage',field:'image',name:'portrait.png'}]);
   assert.deepEqual(mediaInputRequirements({kind:'music',payload:{}}).engine_local_files,[]);
-});
-test('private tool uses the enrolled engine and saved job; uploaded-only jobs need no SSH',async()=>{
-  const connection={ssh:['enrolled']},engine={kind:'comfyui',container:'a'.repeat(64)};
-  const config={media_jobs:{workers:{one:{engines:{video:engine}}}},genie_chat:{inspection:{workers:{one:connection}}}};
-  const job={id:'saved',kind:'video',payload:{prompt:{five:{class_type:'LoadImage',inputs:{image:'portrait.png'}}}}};
-  const jobs={get:id=>{assert.equal(id,'saved');return job;}};let calls=0;
-  const inspect=async(c,e,files)=>{calls++;assert.equal(c,connection);assert.equal(e,engine);assert.equal(files[0].name,'portrait.png');return {files:[{...files[0],state:'missing'}]};};
-  const tools=createMediaTools({inspectInputs:input=>inspectMediaJobInputs(config,jobs,input,{inspect})});
-  const r=await tools.tool({action:'inputs',job_id:'saved',worker_id:'one'});
-  assert.equal(r.files[0].state,'missing');assert.equal(r.worker_id,'one');assert.match(r.interpretation,/No job was started/);
-  await assert.rejects(tools.tool({action:'inputs',job_id:'saved',worker_id:'unknown'}),/enrolled/);
-  job.payload.prompt.five.inputs.image='stargate/upload.png';job.payload.input_files=['upload'];
-  const portable=await tools.tool({action:'inputs',job_id:'saved',worker_id:'one'});
-  assert.equal(calls,1);assert.deepEqual(portable.files,[]);assert.equal(portable.uploaded_inputs,1);
-  await assert.rejects(tools.tool({action:'inputs',job_id:'saved',worker_id:'one',filename:'arbitrary'}));
 });

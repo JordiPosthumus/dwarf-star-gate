@@ -44,8 +44,10 @@ export class GenerationFaultObserver {
 }
 
 // Explicit operator recovery only, on an isolated idle endpoint. No model-server
-// settings change. The synthetic request has its own small output/time budget.
-export function verifyGeneration(url, model, {worker} = {}) {
+// settings change. Keep the backend's native output and thinking behavior.
+// The caller supplies its normal request deadline; thinking models need room
+// to finish reasoning before they can produce the requested visible answer.
+export function verifyGeneration(url, model, {worker, timeoutMs = 360000000} = {}) {
   return new Promise((resolve,reject)=>{
     const target = worker ? endpointUrl(worker, '/v1/chat/completions') : new URL('/v1/chat/completions',url);
     const req=endpointTransport(target).request(target,{method:'POST',agent:false,headers:{'content-type':'application/json',...(worker ? endpointHeaders(worker) : {})}},res=>{
@@ -60,8 +62,8 @@ export function verifyGeneration(url, model, {worker} = {}) {
         } catch {reject(new Error('Recovery generation did not pass; worker remains quarantined'));}
       });
     });
-    const timer=setTimeout(()=>req.destroy(new Error('Recovery generation timed out; worker remains quarantined')),20000);
+    const timer=setTimeout(()=>req.destroy(new Error('Recovery generation timed out; worker remains quarantined')),timeoutMs);
     req.once('close',()=>clearTimeout(timer));req.on('error',reject);
-    req.end(JSON.stringify({model,stream:false,max_tokens:32,temperature:0,...(worker?.backend === 'openai' ? {chat_template_kwargs:{enable_thinking:false}} : {thinking:{type:'disabled'},reasoning_effort:'none'}),messages:[{role:'user',content:'Reply with exactly DSG_RECOVERY_OK and nothing else.'}]}));
+    req.end(JSON.stringify({model,stream:false,messages:[{role:'user',content:'Reply with exactly DSG_RECOVERY_OK and nothing else.'}]}));
   });
 }

@@ -38,3 +38,9 @@ pickuphere.md
 docs/hourglass-spark-omlx-handoff.md
 docs/server-deployment-reference.md
 plans/
+
+# Native source/runtime are obtained from the public pin, not vendored.
+/vendor/hermes/
+/vendor/hermes-baseline.json
+/GENIE-HERMES-FORK-FIXLIST-*.md
+/Gate-Genie-Embedded-Hermes-Fork-Plan-*.md

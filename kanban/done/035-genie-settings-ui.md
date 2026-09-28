@@ -49,9 +49,14 @@ Landed:
   confirmed honestly ('the next reply/review uses …').
 - Suite 1106 pass / 0 fail (197 gateway tests).
 
-Deployment note: dashboard-side live (2026-09-22 late). The `/set-genie-thinking`
-route and stats field live in the gateway core, which serves continuous
-household traffic tonight — the core park/start reload (door holds calls, no
-model restart) is deferred to the next quiet window. Until then the selectors
-hide themselves honestly (no saved state in the snapshot) and the effective
-levels remain the config values (chat max, reviewer max) applied at startup.
+## Activation and projection verification
+
+Core activation requires an idle reload through an owned Continuity Door hold.
+Native verification then caught a missing dashboard projection field: the core
+reported `genie_thinking`, but the dashboard dropped it before rendering or
+applying it. The bounded projection preserves valid thinking values and strips
+unrelated fields. A live poll/HTTP capabilities regression covers that path
+(98 focused tests passed). Browser and capability-endpoint verification are
+complete; installation-specific settings and receipts remain private.
+The controls are in the Gate Genie capability panel, and worker serving-profile
+defaults remain unchanged.

@@ -1,9 +1,9 @@
 # Current work plan
 
-Updated 17 September 2026. The current goal is the incremental Star Gate plan:
+Updated 24 September 2026. The current goal is the incremental Star Gate plan:
 a conversational Hermes Genie, configuration records and proven restoration,
 queue priorities and qualified concurrency, useful research and approved
-operations, then benchmarking and later media support. Keep the small gateway
+operations, benchmarking and media support. Keep the small gateway
 available and preserve established serving capabilities while delivering it.
 
 The earlier simplification release below is completed history. Its retired
@@ -11,14 +11,33 @@ classifiers and speculative optimizers remain retired; it does not supersede the
 new owner-requested capabilities. Private decisions, configuration records and
 deployment receipts stay outside this public repository.
 
+## Enrolled native trials and operational verification
+
+The [enrolled recipe-trial executors](genie-recipe-trials.md) now connect actual
+Genie calls to bounded Spark-pair and local oMLX comparisons. They preserve the
+original configuration and artifacts, measure A/B/A2, and require verified
+restoration before conditional readmission. The Spark executor exercises native
+context acceptance and two simultaneous requests; the oMLX executor verifies
+cold-to-warm cache reuse and retains adaptive MTP observations. This qualifies
+only the enrolled trial and observed worker, not every engine or future recipe.
+The broader configuration-aware research/Hourglass loop below remains partial.
+
+Fleet power uses fresh native idle checks, a separate healthy worker and detached
+launchers. Native serving checks exercise gateway generation, tool-result exchange
+and cache reuse. Admission receipts survive manager reloads, and a real isolated
+gateway/reload fixture verifies conditional readmission. Installation-specific
+measurements, approvals and restoration receipts remain private.
+
 ## Incremental delivery
 
 - Owner priority: get the basic Genie capabilities working first, with independent
   feature switches and visible failures. Further hardening follows real use;
   preserve active jobs, established settings and deliberate maintenance stops.
 - Independent switches cover routine reviews, Genie queue balancing, recovery,
-  public research, inspection, approved server changes, Hourglass measurement
-  media jobs and new-Spark preparation. All nine choices can be saved before their services are connected.
+  public research, inspection, approved server changes, Hourglass measurement,
+  media jobs, new-Spark preparation and fleet power. All ten choices can be saved
+  before their services are connected. Direct reservation is a separate gateway
+  setting, not an additional Genie capability switch.
   Use the existing gateway state and recovery policy; a switch is not proof that
   a service is connected and does not create recovery enrollment. Active replies and issued operations finish when a
   feature is switched off. Production activation is tracked per release.

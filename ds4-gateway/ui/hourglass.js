@@ -72,6 +72,8 @@ if(panel){
   $('hourglass-start').onclick=()=>act(state.prepared?.maintenance?{action:'start',id:reviewId,plan_revision:state.prepared.maintenance.plan_revision}:{action:'start',id:reviewId,owner_confirmed_idle:$('hourglass-idle').checked});
   $('hourglass-idle').onchange=render;
   $('hourglass-refresh').onclick=()=>act({action:'refresh'});
-  async function poll(){if(busy)return;try{state=await request();token=state.csrf_token;render();}catch{if(!panel.hidden)$('hourglass-control-status').textContent='Dashboard connection unavailable. No start will be retried.';}}
+  async function poll(){if(busy||document.hidden||$('view-analytics').hidden)return;try{state=await request();token=state.csrf_token;render();}catch{if(!panel.hidden)$('hourglass-control-status').textContent='Dashboard connection unavailable. No start will be retried.';}}
+  new MutationObserver(()=>void poll()).observe($('view-analytics'),{attributes:true,attributeFilter:['hidden']});
+  document.addEventListener('visibilitychange',()=>void poll());
   void poll();setInterval(poll,5000);
 }

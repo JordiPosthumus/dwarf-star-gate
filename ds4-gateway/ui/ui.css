@@ -39,7 +39,6 @@
 
 .fleet-native-progress{margin:16px 0;padding:12px;background:rgba(185,214,139,.06);border-radius:6px}.fleet-native-progress>progress{display:block;width:100%;margin:10px 0;accent-color:#b9d68b}.fleet-native-progress>p{font-size:12px;margin:6px 0 0}
 
-.routing-summary{padding:13px 18px;border-radius:10px;border:1px solid var(--line);white-space:pre-line}.routing-summary[hidden]{display:none}.routing-summary.info{background:#1c2420;border-color:#3c5145;color:#cfe8d6}.routing-summary.warning{background:#3a2923;border-color:#80543e;color:#ffd1b5}.routing-summary.error{background:#3a2323;border-color:#8b4038;color:#ffb3a8}
 
 /* Compact fleet cards: dot + one live line + conditional chips + Details drawer. */
 .devices{grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:12px}
@@ -78,12 +77,12 @@
 .device-live .remaining-estimate{font-size:10px;color:var(--muted);white-space:nowrap}
 
 /* Always-visible utilization strip on the card face. */
-.device-bar{margin-top:8px;display:flex;align-items:center;gap:8px}
+.device-bar{margin-top:8px;display:grid;grid-template-columns:max-content minmax(0,1fr) 3rem;align-items:center;gap:8px}
 .device-bar .bar-label{font-size:8px;letter-spacing:1px;color:var(--muted);white-space:nowrap}
 .device-bar .activity-timeline{flex:1;margin:0;height:12px;min-width:0}
 
 .device-bar .activity-timeline .lane-divider{stroke:var(--bg);stroke-width:1.5;vector-effect:non-scaling-stroke}
-.device-bar .bar-note{font-size:8px;color:var(--muted);white-space:nowrap;cursor:help}
+.device-bar .bar-note{box-sizing:border-box;text-align:center;font-size:8px;color:var(--muted);white-space:nowrap;cursor:help}
 .device-bar .bar-note.pair{color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:0 5px;line-height:1.6}
 .timeline-pair-note{display:none}
 .device-minicharts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:7px}
@@ -119,3 +118,56 @@
 .device-live{margin-top:5px}
 .device-minicharts{margin-top:5px;gap:8px}
 .mini-chart-block .chart{height:30px;margin:0}
+
+/* Native media queues are compact observations within a model card. */
+.device .fleet-native-media{margin:8px 0 0;padding:6px 0 0;border-top:1px solid var(--line);font-size:10px;line-height:1.4}
+.fleet-native-row{display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.1fr) minmax(0,1.2fr) auto;align-items:baseline;gap:4px 7px;padding:4px 0;min-width:0}
+.fleet-native-row>span,.fleet-native-row>strong{min-width:0;overflow-wrap:anywhere}
+.fleet-native-host,.fleet-native-age{color:var(--muted)}
+.fleet-native-row>strong{font-size:10px;font-weight:600}
+.fleet-native-state{text-align:right;color:var(--muted)}
+.fleet-native-row[data-state="busy"] .fleet-native-state{color:var(--accent)}
+.fleet-native-row[data-state="unknown"] .fleet-native-state{color:var(--orange)}
+.fleet-native-age{font-size:9px;white-space:nowrap;text-align:right}
+.device .fleet-native-details{margin:3px 0 0;padding:0;font-size:10px}
+.fleet-native-details>summary{cursor:pointer;color:var(--muted);padding:3px 0}
+.fleet-native-details p{margin:5px 0;line-height:1.45;color:var(--muted)}
+.fleet-native-details dl{margin:7px 0}
+.fleet-native-details dt{font-weight:600;margin-top:6px}
+.fleet-native-details dd{margin:2px 0 0;color:var(--muted);overflow-wrap:anywhere}
+
+/* A disclosure on one server must not stretch every card in its grid row. */
+.devices{align-items:start}
+.device .fleet-native-media{font-size:11px}
+.device .fleet-native-details>summary{padding:5px 0;font-size:11px}
+.fleet-native-details>summary.media-uncertain{color:var(--orange)}
+.fleet-native-row>strong{font-size:11px}
+.fleet-native-row{grid-template-columns:minmax(0,.65fr) minmax(0,1fr) minmax(0,1.2fr) auto}
+.device-identity{width:100%}
+.device-name-text{flex:1;min-width:0}
+.catalogue{max-width:none;overflow-x:auto}
+/* Keep every workspace discoverable on a phone without sideways scrolling. */
+@media(max-width:600px){
+  .workspace-tabs[role="tablist"]{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;gap:3px}
+  .workspace-tabs[role="tablist"] button{padding:9px 4px;white-space:nowrap}
+  .workspace-tabs[role="tablist"] .settings-tab{margin-left:0;justify-content:center}
+}
+.device>.fleet-media-warning{font-size:11px;line-height:1.4;margin:8px 0}
+/* Pair suffixes distinguish servers; do not truncate them behind an ellipsis. */
+.device .device-name-text{white-space:normal;overflow-wrap:anywhere;line-height:1.3}
+
+/* Configuration stays available without displacing the Genie conversation. */
+#genie-capabilities .genie-capability-settings{margin:0;max-width:none}
+#genie-capabilities .genie-capability-settings>summary{padding:4px 0;font-size:12px}
+#genie-service-failures:empty{display:none}
+#genie-service-failures p{margin:6px 0;font-size:11px;overflow-wrap:anywhere}
+
+.device-service{font-size:10px;color:var(--muted);line-height:1.4;margin-top:5px;overflow-wrap:anywhere}
+.device-topology-warning{font-size:11px;line-height:1.4;color:var(--orange);margin:7px 0}
+.device .device-alternatives{max-width:none;margin:10px 0 0;font-size:11px}
+.device-alternatives>summary{padding:5px 0}
+.device-alternatives p{font-size:11px;line-height:1.45;margin:6px 0}
+.alternative-service{display:grid;gap:4px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.alternative-service>span,.alternative-service>small{color:var(--muted);line-height:1.4}
+.alternative-service>.button{justify-self:start}
+.alternative-service button:disabled{opacity:.55;cursor:not-allowed}

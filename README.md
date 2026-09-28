@@ -1,350 +1,54 @@
 # Star Gate
 
-**Seamless Continuity**
-
-Keep your agents working across a local inference fleet.
+A local inference gateway and dashboard for OpenAI-compatible model servers,
+including DGX Sparks and Macs. Give applications one endpoint while preserving
+model-server settings, session affinity and queued conversation order.
 
 <img src="ds4-gateway/ui/logo.svg" alt="Star Gate logo" width="240">
 
-[MIT licensed](LICENSE) · Created by [Jordi Posthumus](https://github.com/JordiPosthumus).
+[MIT licensed](LICENSE) · [Credits](CREDITS.md)
 
-**Star Gate is a local gateway for a home fleet of model servers—DGX Sparks,
-Macs, or a mix.** Connect OpenAI-compatible backends such as oMLX, vLLM, SGLang
-or DS4. It gives your applications one endpoint and you one dashboard,
-helping you manage a home inference fleet with less manual effort and make better
-use of your hardware. See which devices are busy or idle, where requests are
-waiting, and how much time is spent processing prompts and generating responses.
+## Gate Genie uses native Hermes
 
-For oMLX, vLLM, SGLang or another compatible server, see
-[OpenAI-compatible workers](docs/openai-endpoints.md). Model handling stays with
-the backend; DSG preserves its existing scheduling and a shared context limit.
+Gate Genie is a separate native Hermes agent with Hermes' own tools, memory,
+skills, cron and Telegram gateway. The previous embedded agent loop, custom
+Telegram bridge, automatic assessment calls and tool wrappers have been removed.
+The inference gateway works independently of Genie. Dashboard status polling does
+not invoke an LLM.
 
-For adding an inference backend, see the
-[new-backend onboarding guide](docs/server-setup-guide.md): parameter contracts,
-thinking choices and evidence for the Hourglass → DSG → backend chain.
+The **Brain** tab edits native provider, model, endpoint and reasoning defaults;
+**Soul** edits the profile's SOUL.md; **Memory** reads native memory and skills.
+Edits preserve unrelated configuration and back up changed files. They do not
+restart a running conversation. Native setup configures credentials and Telegram.
+See [installation, configuration and priority](hermes/README.md).
 
-Use [Testing mode](docs/testing-mode.md) for isolated admission through the normal
-gateway machinery. [Conversation turns](docs/conversation-turns.md) explains the
-default five-turn allocation and the client conversation header. Change the allowance live in **Settings → Conversation scheduling → Consecutive conversation turns**, then click **Apply**. Active responses finish normally and the saved value survives gateway restarts.
+Genie's machine access comes from the account running Hermes and its native
+settings. Star Gate does not impose a second tool-approval system. Configure
+permissions for your installation through Hermes. Genie requests with the
+configured scheduling header take the next compatible available slot ahead of
+ordinary queued work; running generations finish normally.
 
-> Our guiding light: a low-effort inference fleet that keeps agents working.
-> Intelligence should make that dependable foundation better—not become another
-> dependency that can stall it.
+## Dashboard and routing
 
-Reliable scheduling and client continuity come first. Genie supervises and
-explains; predictive models earn authority through measured improvements, with
-deterministic fallbacks. See the [delivery principles](docs/roadmap.md#delivery-principles).
+Server cards group configured hardware and alternative service profiles. Routing
+groups and concurrent request capacity are separate counts: a group with capacity
+two contributes two possible active gateway requests. Direct backend clients are
+outside gateway request counts. Unknown measurements remain unknown.
 
-**Gate Genie is Star Gate's local fleet assistant, enabled by default once configured.**
-Point him at a dedicated
-OpenAI-compatible model server—an excellent role for older or slower hardware that
-can still run a compatible model—or enable DSG pool fallback. If that dedicated
-endpoint fails, he can borrow one available inference slot from the fleet and
-keep watching the show. He reviews fleet evidence, explains problems in the
-dashboard, remembers evidence-linked operational notes, and can request only the
-bounded recovery actions you explicitly enable. Pool fallback consumes ordinary
-inference capacity and never grants unrestricted machine access. See
-[Genie setup and boundaries](docs/observer.md), [memory](docs/genie-memory.md),
-and [service recovery](docs/worker-recovery.md).
+The UI provides routing controls, Current Jobs, telemetry, media state and local
+settings. Inactive media details are collapsed. Monitoring uses local state and
+backend measurements, not model-generated reports.
 
-An optional [private server configuration library](docs/server-records.md) gives
-Settings and conversational Genie dated engine facts, with observations kept
-separate from approved configurations and restoration evidence.
+Useful guides:
 
-For a conversation-first interface, [conversational Genie](docs/genie-conversation.md)
-adds saved chats and follow-up questions through Hermes. Try the clearly labelled
-example interface with `npm run genie:demo`, then connect your own model using the
-guide. With the corresponding capability switches enabled, chat can move eligible
-waiting jobs and request recovery through the existing enrolled-service executor.
-Server configuration changes use a separate exact-plan approval workflow.
+- [Compatible endpoints](docs/openai-endpoints.md), [backend onboarding](docs/server-setup-guide.md).
+- [Serving profiles](docs/serving-profiles.md), [concurrency](docs/concurrency.md), [context limits](docs/context-limits.md).
+- [Conversation scheduling](docs/conversation-turns.md), [queue priority](docs/queue-priority.md), [handover](docs/queued-handover.md).
+- [Continuity Door](docs/continuity-door.md), [installation](docs/installation.md), [agent CLI/API](docs/agent-api.md).
+- [Machine setup](docs/agent-machine-setup.md).
 
-**Star Gate also gives your local agents an easy control surface for managing the
-gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents
-inspect the fleet, temporarily take a server out of routing, and return it when
-their work is done—without overriding your pauses or another agent's reservation.
-An optional [Agent Watch](docs/agent-watch.md) heartbeat also lets DSG and Genie
-tell local tool work, waiting inside DSG, and “the client says it is waiting but
-no request reached this gateway” apart—without sending task or conversation text.
-
-**Current Jobs** shows local request previews, worker placement, state, priority
-and waiting/running times. With controls enabled, choose **High**, **Normal** or
-**Idle only** for a waiting request. Running work finishes and turns in the same
-conversation stay in order. Clients can also set the explicit
-[`x-dsg-priority` header](docs/queue-priority.md). Previews remain transient and
-do not trigger model calls or determine priority. The retired Priority Lens
-classifier and Proactive Resume remain retired. Agent Watch and certified
-pre-dispatch continuity remain available.
-
-**[Read the simplified system overview](docs/simplified-system.md).**
-
-**Follow the project:** [recent work in plain English](WORKLOG.md) ·
-[detailed changelog](CHANGELOG.md) · [current work plan](docs/current-work-plan.md) ·
-[detailed roadmap](docs/roadmap.md).
-
-Conversations stay with their assigned server to encourage cache reuse; new
-conversations are placed according to load. Add, pause, resume or remove servers
-through the local UI or CLI. DS4 handles inference and its caches; DSG handles
-coordination and visibility across the fleet.
-
-**The Continuity Door keeps the client endpoint stable during planned DSG core
-maintenance.** It holds new request streams unread while existing responses drain,
-replaces only the gateway core, verifies worker startup, then forwards each held
-request exactly once. It never spools prompts or replays dispatched work. This
-protects coordinated DSG restarts; it is not transparent recovery from an
-arbitrary mid-generation engine crash. See the [exact contract](docs/continuity-door.md).
-
-Each server card shows whether it is routing, paused, protected by a named
-maintenance lock, reserved by an agent, or quarantined—and why. **Pause / Resume routing** is directly on the card; a
-quarantined server offers **Verify & readmit**, which checks actual generation
-before returning it to the pool. No hidden exclusion toggle or blind fault reset.
-
-**DS4-specific, without modifying DS4:** use the engine's existing API and logs,
-adapt to verified capabilities, and keep unknowns explicit. No custom DS4 patch
-or rebuild is required. See the [integration boundary](docs/ds4-integration.md).
-
-Setup research is available from the **Gate Genie → Setup research** panel.
-Start a study when you want, or select a reminder interval. Each reminder asks
-before starting; **Ask tomorrow** and **Skip this time** make no model call.
-See [research studies](docs/genie-studies.md) for configuration, saved evidence
-and permission boundaries.
-
-## What DSG adds
-
-**Agent-friendly fleet management:** give a local coding agent a task such as
-“drain this server for my DS4 test, then return it to the gateway when finished.”
-With an explicit grant for that server, the agent can:
-
-- Read live gateway status: health, active requests, queues and reservations.
-- Drain the server while already admitted requests finish.
-- Release its own reservation afterward; routing resumes only when no other
-  hold or operator pause remains and readiness checks pass. If a legitimate
-  patch changed a quarantined service profile, that explicit final release may
-  instead hand control to the fixed verified-recovery executor; quarantine stays
-  in force until full generation/cache checks pass.
-- Check durable action receipts, so a lost reply does not mean blindly repeating
-  an operation. The dashboard shows who holds each server.
-
-This works with any local agent that can run the supplied client; no Pi or Hermes
-dependency. It uses the same private control executor as DSG's operator and
-Genie controls, with separately scoped permissions. It cannot submit commands,
-profiles or bypass a hold; only the fixed recovery controller can act after an
-explicit maintenance hand-back. See the [agent setup and permission guide](docs/agent-api.md)
-for copyable instructions, commands and the local-account trust boundary.
-
-**Implemented:** private routing evidence, fleet activity, and **Gate Genie**, a
-configured-by-the-operator local fleet assistant that starts observing by default,
-with separately opt-in [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
-and [experimental collector/Genie setup](docs/observer.md). A read-only
-[cache-continuity audit](docs/cache-continuity-audit.md) now measures same-session
-reuse and keeps weak low-reuse evidence unconfirmed; cache migration remains a
-roadmap item. DSG performs a
-[safe queued handover](docs/queued-handover.md) when a first/unaffined request is
-still undispatched and another server becomes free. An established session gets
-a five-minute warm-home first-refusal window by default; after that, the gateway
-core may move its oldest safe, still-undispatched queue head to a completely idle
-server even if the dashboard or Genie is unavailable. The private setting
-`automatic_affinity_rebalance_min_wait_ms` changes that window; `false` preserves
-strict affinity. Gate Genie or the operator may request an exact continuity-safe
-offer sooner. The deterministic executor revalidates every move and preserves
-the original client stream and deadline. Destination cache locality remains
-explicitly unknown.
-An opt-in [persistent Genie notebook](docs/genie-memory.md)
-records worker-state changes, incident/recovery references, explicit operator
-notes and evidence-gated developer hardening suggestions. A collapsible section
-below the conversation in the Gate Genie tab lists the newest suggestion first. Genie may describe a
-test or design improvement only for a deterministic, privacy-bounded failure
-candidate selected by DSG code; the suggestion is a hypothesis, cannot modify the
-gateway or servers and never includes inference content. It survives dashboard
-restarts, stays private and grants no new powers.
-The main status row includes a compact [fleet speed and energy pulse](docs/fleet-throughput.md):
-duration-weighted decode and prefill gauges with a browser-local 1h/12h/24h
-window, a restrained activity-coverage arc, observed generated tokens, and—once
-every device supplies dense measured power—estimated kWh and tokens/kWh. Missing
-power stays visibly unknown; DSG never turns a TDP into pretend energy telemetry.
-An optional [10-second hardware telemetry lane](docs/hardware-telemetry.md) now
-provides compact per-server RAM, accelerator, power and clock evidence. DGX Spark
-uses a fixed read-only SSH/NVIDIA adapter; Macs and external meters can use an
-explicit local numerical JSONL source. Both are opt-in, bounded, and grant no
-control power.
-Workers with recognized engine faults or repeated inference failures are
-[quarantined persistently](docs/generation-health.md); recovery requires a real
-generation check. Opt-in recovery can restart an explicitly enrolled systemd-user
-service or macOS LaunchAgent after current-instance fatal evidence, then verify
-generation and cold-to-warm reuse. The systemd adapter has a real DGX Spark canary;
-the launchd adapter is synthetically tested and remains ineligible until each Mac
-completes its own private enrollment and operator canary. DSG separately reports
-sanitized management-path evidence—such as DNS,
-SSH authentication/identity, timeout or DS4 readiness—so the operator and Genie
-can distinguish a network problem from an engine fault without exposing private
-hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
-dependency.
-
-To give your own local agent the setup task, use
-[Enroll a DS4 server for recovery — agent guide](docs/agent-recovery-enrollment.md).
-It starts with inspection and a proposal; restarts, routing changes and automatic
-recovery require explicit owner approval. Adding an inference endpoint alone does
-not grant recovery permission.
-
-The **Verified profile hand-back** sub-policy starts enabled but is dormant unless
-automatic service recovery is also enabled. It closes a common maintenance trap:
-the same enrolled machine/service is patched or upgraded, its old fingerprint no
-longer matches, and it is left quarantined. DSG requires the identical changed
-profile across separated inspections, no admitted work, and either a proven new
-invocation or current fatal evidence; it then adopts the private fingerprint and
-runs the full recovery verification before readmission. Operator pauses, scoped
-agent holds and [named maintenance locks](docs/maintenance-locks.md) always block
-it. Genie may request the evidence offer, but cannot supply a profile or command.
-
-The dashboard's compact **health wire** always puts deterministic live quarantine
-and enabled-but-unavailable capacity alarms first, even if Gate Genie's model is
-off, failed or still thinking. Planned operator pauses, current maintenance locks
-and scoped agent holds do not produce false fault alarms; an overdue lock does
-raise a review reminder without releasing it. Fresh Genie-written observations and concise
-recommendations follow the safety facts; stale or health-invalidated advice is
-withheld. An independently revalidated executor receipt is the only proof that an
-action happened. Hover or keyboard focus pauses the wire for reading; reduced
-motion shows static text. Expanded assessments stay open across refreshes.
-
-Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
-session-recency clocks and compares a historical baseline without moving work.
-Its estimates are explicitly unvalidated. Operational evidence also includes a read-only
-[cache-cost calculator](docs/cache-cost.md) using measured disk-load/prefill
-components. The speculative four-path comparator and calibration preflight have
-been retired; these observations do not determine routing.
-
-## Engines and credits
-
-Star Gate coordinates model servers; the inference engines and model authors
-provide token generation, kernels, model weights and cache implementations.
-The project began around [DwarfStar / DS4](https://github.com/antirez/ds4), by
-[Salvatore “antirez” Sanfilippo](https://github.com/antirez) and its contributors,
-and now supports other OpenAI-compatible backends as well.
-
-See [full credits and upstream links](CREDITS.md). Engine projects retain their
-own licenses and authorship; Star Gate is an independent gateway.
-
-Existing `DSG`, `ds4-gateway`, `dwarf-star-gate` service identifiers, environment
-variables and API headers remain compatible. The rebrand changes the product
-name, not the names an existing installation relies on.
-
-The gateway core, Continuity Door and dashboard use Node.js built-ins only; the optional systemd recovery
-helper uses Python's standard library. No package installation, database, Kubernetes, frontend
-build system, CDN, analytics service or cloud telemetry.
-
-## Dashboard
-
-Machine [speed charts](docs/rate-charts.md) use consistent phase colours and
-separate fleet-record scales for prefill and decode.
-
-Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
-Five focused views keep the control room compact: **Fleet** for live capacity and
-server cards, **Gate Genie** for reports and recovery, **Evidence** for collection and cache evidence, **Activity** for continuity and request history, and a far-right
-**Settings** tab for server enrollment and gateway controls. Settings appears only
-when this dashboard has the local management capability. The health wire remains
-visible above every view so a focused page does not hide an incident.
-These captures show the current interface with **synthetic demo data**, not live
-sessions, measured benchmarks or proof of model accuracy. The example fleet mixes
-Sparks and a Mac; all displayed servers, reports and predictions are fictional.
-See [screenshot reproduction and checks](docs/screenshots.md).
-
-![Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
-
-<details>
-<summary>Gate Genie, analytics and activity views</summary>
-
-![Synthetic Gate Genie assessment and recovery view](docs/images/dashboard-genie.png)
-
-![Synthetic operational evidence and cache calculator](docs/images/dashboard-analytics.png)
-
-![Synthetic continuity evidence and request history](docs/images/dashboard-activity.png)
-
-</details>
-
-Run `npm run ui:demo` for the isolated screenshot preview on loopback port 30011.
-It does not connect to workers, read local logs or load production configuration.
-The regular dashboard is on port 30010. Artwork lives at
-`ds4-gateway/ui/logo.svg`; it can be replaced without touching gateway behavior.
-
-The dashboard also ships a logo-derived gate/star icon: SVG and 16/32px ICO
-favicons, a 32px PNG, a 180px Apple touch icon, and a monochrome Safari pinned-tab
-mask following [Apple's pinned-tab guidance](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/pinnedTabs/pinnedTabs.html).
-The wordmark is omitted at icon sizes for legibility. The HTML uses versioned
-`v2` icon routes so Safari does not keep the old numeric hostname fallback; if an
-already pinned tab still shows it, reload once and unpin/re-pin it. The vector
-source is `ds4-gateway/ui/dsg-pinned-v1.svg`; `scripts/build-icons.mjs` regenerates
-the other assets with development-only Sharp. Generated assets are committed, so
-using DSG does not require Sharp or an icon build step. The main logo is unchanged.
-
-## The gateway
-
-A **DS4 server** is one registered model-server endpoint. Code, configuration and
-CLI commands also call it a **worker**; these mean the same thing, not necessarily
-a physical machine. Each server may have its own native context and cache settings.
-
-- Durable session affinity: later turns return to the same worker to improve the
-  chance of KV reuse. Busy established conversations queue at home for a
-  configurable first-refusal window, then an eligible queue head may take a
-  completely idle server under the exact [pre-dispatch handover](docs/queued-handover.md)
-  safety contract.
-- Load-aware placement of **new** conversations using each worker’s explicit
-  request capacity (one by default). Extra requests wait in bounded queues with
-  explicit priority classes and ordered conversation turns.
-  If a first DSG request was queued behind work and another server becomes free,
-  DSG atomically hands that untouched request to the free server. It keeps the
-  original client socket and deadline and never replays a body.
-  The [queue-wait allowance](docs/queue-wait.md) defaults to **20,000 hours**;
-  the separate active-request default remains 100 hours. Explicit private-config
-  overrides take precedence. Queued HTTP connections do not survive a gateway restart.
-- Request/stream passthrough by default. Opt-in [serving profiles](docs/serving-profiles.md)
-  fill omitted sampling and thinking fields while preserving explicit client values.
-  Output allowances and tool calls remain client-controlled. The optional, narrowly scoped [image compatibility
-  protection](docs/vision-protection.md) handles DS4's proven pre-generation JPEG
-  and GIF rejections. It converts JPEGs to PNG and retries once on the same
-  server. After DS4's exact 16-image rejection, DSG retries once on the same server only when it
-  independently proves the valid request really contains more than 16 typed images.
-  DSG chooses no images: it withholds all visual blocks from a single recovery
-  call and adds an explicit diagnostic telling the model to decide how to recover.
-  For a proven GIF rejection, only the unsupported GIF is withheld and the model
-  is told to consider selected PNG frames. The client's stored conversation stays
-  untouched. A second rejection becomes a completed guidance turn; there is no loop.
-  Gateway guidance alone does not guarantee that
-  an arbitrary harness will repair and resubmit its visual context.
-  Generic JSON errors are never intercepted unless the captured request
-  independently proves a valid typed GIF caused that exact DS4 response.
-- No automatic replay after an ambiguous upstream failure.
-- Privacy-safe post-dispatch stream evidence distinguishes a real terminal event,
-  an in-band engine error, a clean early EOF, a cut-off SSE event and an
-  observation-limit abstention. Gate Genie can turn the exact bounded failure
-  shape into a developer hardening suggestion, but DSG does not retain stream
-  text, fabricate completion or replay the request. See
-  [client continuity](docs/client-continuity.md).
-- [Patient outage waiting](docs/client-continuity.md): undispatched calls wait for
-  readiness/recovery under the same queue allowance, without exhausting the
-  client's short retry loop. Pauses and quarantine remain authoritative. DSG's
-  own API errors start `DSG Report:`; engine error bodies stay unchanged.
-- SSH tunnel recovery, model/context health checks and durable per-worker drain.
-- Private Unix-socket operator controls, not a public worker-admin endpoint.
-
-It does **not** move caches, guarantee hits, manage model containers, or know GPU
-memory pressure. DS4 owns cache validity and GPU concurrency. Draining here does
-not prove a worker has no direct clients; verify those before stopping it.
-
-**Concurrency and dashboard counts:** one active request includes prefill, thinking
-and decode, for both streaming and non-streaming responses. Each worker has a configured gateway request capacity, defaulting to one.
-See [per-worker concurrency](docs/concurrency.md) for qualification and controls.
-With default capacities, three healthy, enabled servers handle up to three active
-gateway requests; established
-session affinity may still queue requests at a busy home while another server is
-idle during its warm-home first-refusal window. First/unaffined requests can take
-a newly free server immediately; established sessions become eligible after the
-configured automatic wait. Available
-means healthy and enabled, not idle. Direct clients bypass these gateway counts and
-limits. Warm/hot KV slots retain sessions and do not add simultaneous generation
-slots. DSG does not alter the native server's own concurrency configuration.
-
-Use one registration per server instance; duplicate aliases to the same instance
-can defeat the per-server limit. Separate instances on the same physical machine
-are scheduled independently—DSG does not coordinate their shared RAM/GPU capacity.
+Older worklogs and design proposals describe historical implementations; native
+Hermes and the current source are authoritative for the Genie architecture.
 
 ## Quick start
 
@@ -375,16 +79,12 @@ npm run door
 npm run ui
 ```
 
-No `npm install` is needed for the core. Normal setup also installs its own pinned
-Hermes and Python for conversational Genie, asks for your model API connection,
-and verifies a reply. No previous Hermes installation is needed. Git, tar and
-internet access are required for that download; your model must already be reachable.
-Your personal Hermes installation is preserved. See [Genie setup](docs/genie-conversation.md).
+No `npm install` is needed for the core. Setup creates an ignored, mode-0600
+`config.local.json` with a random API key and an empty worker list. Existing
+settings are preserved. Omit `--controls` for a read-only dashboard.
+Gate Genie is optional and installed separately using [native Hermes setup](hermes/README.md).
+Setup does not install or start an agent, contact a model, or configure Telegram.
 
-Setup creates an ignored, mode-0600 `config.local.json` with a random API key and
-an empty worker list. Existing settings are preserved; adding Genie to an existing
-configuration first creates a private backup. Omit `--controls` for a read-only
-dashboard. Use `--gateway-only` only if you explicitly want to skip Genie.
 Open **http://127.0.0.1:30010**, expand **Manage servers**, add existing DS4
 endpoints and enable them after the compatibility check. Remote servers need a
 working, host-key-verified OpenSSH alias; local servers use their loopback URL.
@@ -472,7 +172,7 @@ See [installation, upgrades and private files](docs/installation.md) for details
 The **Thinking** row shows the DS4 serving mode derived from supported request
 rules and the server context. Hover to see the original requested fields and
 evidence basis. Unavailable interpretations show Unknown; idle cards retain a
-marked Last value. Genie requests `high` explicitly. This observation does not
+marked Last value. The client chooses its reasoning setting. This observation does not
 change client requests or server settings.
 
 Per worker, the dashboard displays:
@@ -647,9 +347,7 @@ and `worker_removed` in the private gateway log. Failed health probes do not
 remove workers; generation quarantine is a separate state. Legacy operator events
 record the action and target, not an authenticated individual. The new scoped
 [agent API](docs/agent-api.md) records the credential's principal and owned hold;
-that identifies a grant, not which model or human possessed it. Genie cannot issue ordinary
-pause/remove controls; it can request only independently guarded recovery when
-authorized. Restarting DSG preserves manual pauses and removals.
+that identifies a grant, not which model or human possessed it. Native Hermes can use local operator commands when its account and settings permit them. Restarting DSG preserves manual pauses and removals.
 
 **Agent handoffs:** use `agents.sh` to grant access to named workers, inspect live
 status, acquire a drain hold and release only that agent's hold when its test is
@@ -722,8 +420,8 @@ Each manual pause/resume now retains a bounded timestamped control-channel recei
 (`dashboard`, `workers_cli`, or another local path) and exposes the latest receipt
 in that server's routing tooltip. This identifies how the request reached the
 private operator socket, not which human or same-user process initiated it. A
-scoped agent and Gate Genie cannot clear an operator pause; the unrestricted local
-operator CLI deliberately can. Use scoped holds for maintenance agents. For an
+scoped agent cannot clear an operator pause; native Hermes may use the unrestricted
+local operator CLI when authorized. Use scoped holds for maintenance agents. For an
 external test or stronger cross-agent veto, a [named durable maintenance lock](docs/maintenance-locks.md)
 survives restart, blocks broad Resume and every recovery path, and never
 auto-expires. Its optional review time only warns. Releasing the exact lock leaves
@@ -805,3 +503,35 @@ without warranty, as described in the license.
 
 DS4, dependencies and separately obtained model weights retain their own licenses
 and notices; DSG's license does not replace those terms. See [credits](CREDITS.md).
+
+
+The dashboard’s **Brain** tab edits Gate Genie’s native Hermes provider, model,
+API endpoint and reasoning setting. Saves preserve the rest of `config.yaml`
+and back up the previous file under the Hermes profile’s `brain-history/`.
+Hermes reads these defaults between turns; an explicit conversation `/model`
+override still takes precedence. Saving does not restart Hermes or reset its
+conversation. **Test connection** only lists provider models and submits no
+inference. Credentials remain managed by native Hermes setup. Dashboard status
+polling reads local runtime state and does not ask Genie to generate reports.
+
+### Pool model discovery
+
+For OpenAI-compatible or model-agnostic workers, the gateway resolves its logical
+pool name (usually `PoolModel`) from the existing `/v1/models` health check. A
+single-model endpoint automatically follows model replacements, including a
+stale saved pool alias. A valid configured pool alias takes precedence on a
+multi-model endpoint; otherwise a native model matching the pool name is used.
+An ambiguous catalogue requires an explicit pool alias; list order is never a
+model-selection policy. Other explicit model names and aliases remain unchanged.
+
+Model discovery, request translation and the displayed serving model use the
+same resolution. Updates take effect after the next successful existing health
+probe (normally within five seconds); model changes should finish before new
+work is admitted. This adds no polls, LLM calls or inference retries, and does
+not alter context limits, generation settings or request concurrency.
+
+On a single-model Qwen 3.8 backend, maximum reasoning is spelled `xhigh`.
+The gateway translates a top-level Chat Completions `reasoning_effort: "max"`
+to that native spelling. This preserves maximum reasoning; it does not change
+Genie's saved setting or requests sent to GLM. Other effort values, nested tool
+arguments, prompts and generation parameters pass through unchanged.

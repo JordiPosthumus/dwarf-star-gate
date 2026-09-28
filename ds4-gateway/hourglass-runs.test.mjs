@@ -10,9 +10,9 @@ import {execFileSync} from 'node:child_process';
 import {HourglassRuns,hourglassRunsForChat} from './hourglass-runs.mjs';
 import {hourglassReportSummary} from './hourglass-report.mjs';
 import {createDashboard,runDashboard} from './dashboard.mjs';
-import {hermesProvider} from './genie-hermes.mjs';
-import {GenieChat} from './genie-chat.mjs';
-import {chatContext} from './genie-chat.mjs';
+
+
+
 const config={url:'http://127.0.0.1:4534',targets:[{model:'example',worker_id:'example-worker',route:'direct'}]};
 const nativeReport=()=>({format:'hourglass-public-report-v1',model:'Example model',state:'final',score_version:'total-points-v1',hourglass_score:0,benchmark_version:'4.0.0'});
 function fixture(t){
@@ -91,7 +91,7 @@ test('unavailable observation and changed console retain history; corrupt or pip
 });
 
 test('same-origin dashboard control requires CSRF and explicit start; refresh only observes',async t=>{
- const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
+ const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}), {hourglass:runs});
  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();runs.close();});
  const origin=`http://127.0.0.1:${server.address().port}`,status=()=>fetch(origin+'/api/hourglass').then(r=>r.json());const first=await status();
  assert.equal(f.calls.length,0);const headers={'content-type':'application/json',origin,'x-dsg-csrf':first.csrf_token};
@@ -105,94 +105,22 @@ test('same-origin dashboard control requires CSRF and explicit start; refresh on
  assert.equal((await fetch(origin+'/hourglass.js')).status,200);
 });
 
-test('normal dashboard restart retains native acceptance and adds collected results to Genie context',async t=>{
- const f=fixture(t),jobId='f'.repeat(32);let starts=0,phase='running';
- const native=http.createServer((req,res)=>{
-  res.setHeader('content-type','application/json');
-  if(req.url==='/api/health')return res.end(JSON.stringify({app:'Hourglass',version:2,controller_instance:'fixture'}));
-  if(req.url==='/api/state')return res.end(JSON.stringify({app:'Hourglass',version:2,benchmark_version:'4.0.0',models_revision:'a'.repeat(64),endpoint_hardware:{revision:'b'.repeat(64)},
-   model_configs:[{name:'example',model:'native-model',base_url:'http://example.invalid/v1',max_tokens:262144}],tasks:[{id:'fixture',task_bundle_sha:'c'.repeat(64),issues:[]}],
-   jobs:{running:starts?[{id:jobId,model:'example',state:phase}]:[],pending:[],done:[]},score_policy:{window_s:3600,metric:'total-points-v1'}}));
-  if(req.url==='/api/run'&&req.method==='POST'){let body='';req.on('data',c=>body+=c);req.on('end',()=>{assert.equal(JSON.parse(body).models_revision,'a'.repeat(64));starts++;res.end(JSON.stringify({ok:true,job:jobId}));});return;}
-  if(req.url.startsWith('/scores/api/preview?'))return res.end(JSON.stringify({token:'e'.repeat(24)}));
-  if(req.url==='/scores/file/'+'e'.repeat(24)+'/report.json')return res.end(JSON.stringify({...nativeReport(),run_key:createHash('sha256').update(jobId).digest('hex').slice(0,24),notes:'PRIVATE_NATIVE_NOTES'}));
-  res.statusCode=404;res.end('{}');
- });native.listen(0,'127.0.0.1');await once(native,'listening');t.after(()=>{native.closeAllConnections();native.close();});
- const core=http.createServer((_req,res)=>res.end(JSON.stringify({version:1,model:'example',context_length:262144,workers:[],healthy:0,total:0,active:0,queued:0})));
- core.listen(0,'127.0.0.1');await once(core,'listening');t.after(()=>{core.closeAllConnections();core.close();});
- const file=path.join(f.directory,'config.json');fs.writeFileSync(file,JSON.stringify({port:core.address().port,api_key:'synthetic',nodes:[],genie:false,state_file:path.join(f.directory,'runtime/state.json'),hourglass_console:{...config,url:`http://127.0.0.1:${native.address().port}`}}));
- let app=await runDashboard(file,0);t.after(()=>app.close());
- const origin=()=>`http://127.0.0.1:${app.server.address().port}`;
- const status=()=>fetch(origin()+'/api/hourglass').then(r=>r.json());
- const post=async body=>{const s=await status(),r=await fetch(origin()+'/api/hourglass',{method:'POST',headers:{origin:origin(),'content-type':'application/json','x-dsg-csrf':s.csrf_token},body:JSON.stringify(body)});assert.equal(r.status,200);return r.json();};
- assert.equal(starts,0);let prepared=await post({action:'prepare',model:'example'});await post({action:'start',id:prepared.prepared.id,owner_confirmed_idle:true});
- assert.equal(starts,1);app.close();app=await runDashboard(file,0);assert.equal((await status()).runs[0].state,'accepted');assert.equal(starts,1);
- phase='completed';await post({action:'refresh'});const observed=await(await fetch(origin()+'/api/status')).json();
- assert.equal(observed.hourglass_reports.reports[0].summary.score.value,0);assert.doesNotMatch(JSON.stringify(observed.hourglass_reports),/PRIVATE_NATIVE_NOTES/);
-  assert.equal(chatContext(observed).hourglass_reports.reports[0].association.worker_id,'example-worker');assert.equal(starts,1);
- assert.equal(chatContext(observed).hourglass_measurements.runs[0].state,'completed');
-});
 
 
-test('Genie prepares the existing owner review but cannot start, resolve, replace or expose credentials',async t=>{
- const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
- server.listen(0,'127.0.0.1');await once(server,'listening');runs.bind(server.address().port);
+
+test('removed custom-bot Hourglass API cannot launch work',async t=>{
+ const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),{hourglass:runs});
+ server.listen(0,'127.0.0.1');await once(server,'listening');
  t.after(()=>{server.closeAllConnections();server.close();runs.close();});
- const origin=`http://127.0.0.1:${server.address().port}`,headers={'content-type':'application/json','x-sg-hourglass-tool':runs.toolConfig.token};
- const post=(body,h=headers)=>fetch(origin+'/api/genie/hourglass-tools',{method:'POST',headers:h,body:JSON.stringify(body)});
- assert.equal((await post({action:'status'},{...headers,'x-sg-hourglass-tool':'wrong'})).status,403);
- let result=await (await post({action:'prepare',model:'example'})).json();const id=result.prepared.id;
- assert.match(result.scope,/only Star Gate-owned/);assert.match(result.scope,/empty list does not prove/);
- assert.equal(result.prepared.worker_id,'example-worker');assert.equal(runs.status().prepared.id,id);
- assert.equal((await (await post({action:'prepare',model:'example'})).json()).prepared.id,id);
- assert.equal((await post({action:'prepare',model:'different'})).status,409);assert.equal(runs.status().prepared.id,id);
- for(const action of ['start','resolve','refresh','cancel'])assert.equal((await post({action,id,owner_confirmed_idle:true})).status,409);
- const owner=await(await fetch(origin+'/api/hourglass')).json();
- assert.equal((await post({action:'status'},{...headers,'x-sg-hourglass-tool':owner.csrf_token})).status,403);
- assert.equal((await fetch(origin+'/api/hourglass',{method:'POST',headers:{...headers,origin},body:JSON.stringify({action:'start',id,owner_confirmed_idle:true})})).status,403);
- assert.deepEqual(f.calls,[]);assert.equal(fs.existsSync(runs.file),false);
- assert.doesNotMatch(JSON.stringify(result),new RegExp(runs.toolConfig.token));
- assert.doesNotMatch(JSON.stringify(result),/api_key|models_revision|console_url|endpoint/);
- await runs.change({action:'start',id,owner_confirmed_idle:true});
- result=await (await post({action:'status'})).json();assert.equal(result.runs[0].state,'completed');
- assert.deepEqual(f.calls,['submit','observe']);assert.equal(result.runs[0].has_saved_report,true);
- assert.equal(result.reports[0].summary.score.value,0);
+ const origin=`http://127.0.0.1:${server.address().port}`;
+ for(const action of ['status','prepare','start','resolve','refresh','cancel']) {
+   const response=await fetch(origin+'/api/genie/hourglass-tools',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,model:'example'})});
+   assert.equal(response.status,410);
+ }
+ assert.deepEqual(f.calls,[]);
 });
 
-test('installed Hermes prepares, observes and compares retained reports without starting native work',{
- skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000
-},async t=>{
- const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
- const operationId='11111111-2222-4333-8444-555555555555',operationReads=[];
- runs.operationStatus=async id=>{operationReads.push(id);return {id,worker_id:'example-worker',state:'not_found'};};
- runs.externalReports=()=>({reports:['a','b'].map((key,i)=>({report_revision:key.repeat(64),summary:hourglassReportSummary({...nativeReport(),hourglass_score:20+i,scoring:'net-hour-v3',timing_policy:'hour-v1',bank_fingerprint:'c'.repeat(64),window_seconds:3600,question_timeout_policy:'fixed',execution:{question_timeout_s:900,repeat:1,round_policy:'whole-bank'}})}))});
- server.listen(0,'127.0.0.1');await once(server,'listening');runs.bind(server.address().port);
- const requests=[];let turn=0;
- const upstream=http.createServer((req,res)=>{
-  if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'example-model',context_length:131072}]}));return;}
-  let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{
-   const input=JSON.parse(raw);if(!Array.isArray(input.messages)){res.writeHead(404);res.end('{}');return;}requests.push(input);turn++;
-   const message=turn<=3?{role:'assistant',content:null,tool_calls:[{id:'measurement-'+turn,type:'function',function:{name:'tool_call',arguments:JSON.stringify({
-    name:turn===1?'prepare_hourglass_measurement':turn===2?'hourglass_measurement_status':'compare_hourglass_reports',arguments:turn===1?{model:'example'}:turn===2?{}:{baseline_revision:'a'.repeat(64),candidate_revision:'b'.repeat(64),operation_id:operationId}})}}]}:{role:'assistant',content:'The synthetic comparison has missing condition evidence. No benchmark has started.'};
-   const finish=turn<=3?'tool_calls':'stop';
-   if(input.stream){res.setHeader('content-type','text/event-stream');const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((c,index)=>({index,...c}))}:{})};res.end('data: '+JSON.stringify({choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:finish}]})+'\n\ndata: [DONE]\n\n');}
-   else{res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'fixture',choices:[{index:0,message,finish_reason:finish}],usage:{prompt_tokens:100,completion_tokens:30,total_tokens:130}}));}
-  });
- });upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
- const directory=path.join(f.directory,'chat'),provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,
-  url:`http://127.0.0.1:${upstream.address().port}/v1`,model:'example-model',hourglass:runs.toolConfig},{directory});
- const chat=new GenieChat({directory,provider});
- t.after(()=>{chat.close();server.closeAllConnections();server.close();upstream.closeAllConnections();upstream.close();runs.close();});
- const c=chat.create();chat.submit(c.id,'Prepare the synthetic measurement and check its status.','native-measurement-test');await chat.idle();
- const answer=chat.get(c.id).messages.at(-1);assert.equal(answer.state,'complete',answer.error);
- assert.deepEqual(answer.measurements.events.filter(e=>e.state==='complete').map(e=>e.tool),['prepare_hourglass_measurement','hourglass_measurement_status','compare_hourglass_reports']);
- assert.equal(answer.measurements.events.find(e=>e.tool==='hourglass_measurement_status'&&e.state==='complete').result.prepared.id,runs.status().prepared.id);
- assert.equal(answer.measurements.events.at(-1).result.difference.value,1);assert.equal(answer.measurements.events.at(-1).result.state,'conditions_need_review');
- assert.equal(answer.measurements.events.at(-1).result.operation_association.state,'needs_review');assert.deepEqual(operationReads,[operationId]);
- assert.deepEqual(f.calls,[]);assert.equal(fs.existsSync(runs.file),false);
- assert.doesNotMatch(JSON.stringify(requests),new RegExp(runs.toolConfig.token));
- const reloaded=new GenieChat({directory,provider});assert.deepEqual(reloaded.get(c.id).messages.at(-1).measurements,answer.measurements);
-});
+
 
 test('linked comparison observes one existing operation and retains uncertainty without mutation',async t=>{
  const f=fixture(t),runs=f.make();t.after(()=>runs.close());

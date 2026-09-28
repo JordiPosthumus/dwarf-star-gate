@@ -36,22 +36,6 @@ workers[2].last_requested_thinking = { status:'specified', fields:{reasoning_eff
 workers[2].last_request_finished_at = new Date(now-120000).toISOString();
 const recovery={configured:true,automatic:false,workers:workers.slice(0,2).map(w=>({worker_id:w.id,state:'healthy',eligible:false,reason:'no_current_fatal_evidence'})),operations:[]};
 const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,finished:312,missing_usage:2,truncated:3,failed_or_cancelled:1,last_write:now};
-const genie={enabled:true,busy:false,source:'primary',memory,
-  status(){return {configured:true,enabled:this.enabled,busy:this.busy,question:this.questionReceipt??null,source:this.source,fallback_available:true,last_served_by:'pool_assigned',provider_actions:[{id:'synthetic-assignment',time:now-60000,served_by:'pool_assigned',served_on:'mac-ultra'}],mode:'bounded-recovery',last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
-    hardening_notes:[{candidate_id:'f'.repeat(24),title:'Exercise incomplete-stream continuation',suggestion:'Change: Regression-test the existing incomplete-stream boundary.\nTest: End a scripted upstream stream without a terminal event.\nExpected (not yet verified): The client sees incomplete-stream evidence; no replay occurs.',failure_class:'request_failure',scope:'sparkB',reason:'incomplete_sse',observed_at:new Date(now-90000).toISOString(),continuity:'unknown',at:now-60000,revision:1,durable:true}],
-    reports:[{id:'synthetic-review',time:now-60000,evidence_at:now-62000,source:'demo',text:'Synthetic demonstration, not a live assessment. One request is waiting at its session home while the Mac is idle. That preserves cache locality; it does not prove the fastest completion time. Compare warm-home wait against measured cache acquisition elsewhere before changing placement.',actions_taken:[]}],
-    ticker:{state:this.enabled?'ready':'off',evidence_at:now-62000,entries:[
-      {severity:'warning',text:'Demo: one request is waiting at a busy session home.',recommendation:'Compare its warm-cache wait with idle-server acquisition cost.'},
-      {severity:'good',text:'Demo: three healthy servers; the Mac has a free request slot.'},
-      {severity:'info',text:'Demo: operational request and cache evidence is synthetic.'}]}};},
-  setEnabled(value){this.enabled=value===true;return this.status();},
-  setSource(value){if(!['primary','pool'].includes(value))throw new Error('Unknown demo source');this.source=value;return this.status();},
-  async ask(){return this.status();},
-  submit(question){
-    if(this.busy)throw new Error('Synthetic review is busy');this.busy=true;
-    const receipt={id:'synthetic-question-'+Date.now(),state:'queued',submitted_at:Date.now()};this.questionReceipt=receipt;
-    receipt.state='answered';receipt.finished_at=Date.now();this.busy=false;return {...receipt};
-  }};
 const events = Array.from({length:8},(_,i)=>({
   time:new Date(now-(8-i)*37000).toISOString(),event:'request_finished',node:workers[i%3].id,
   request_id:`${(0xa1b2c300+i).toString(16)}-0000-4000-8000-000000000000`,outcome:i===1?'client_cancelled':'complete',queue_ms:i===4?4200:0,elapsed_ms:12340+i*3700,
@@ -116,7 +100,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     return {...d,last_event:d.last_event+shift,decode:{...d.decode,time:d.decode.time+shift},prefill:{...d.prefill,time:d.prefill.time+shift},series:d.series.map(row=>({...row,time:row.time+shift}))};
   }),
   cache_continuity:{...snapshot.cache_continuity,checked_at:Date.now()},
-  gateway:{...snapshot.gateway,total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
+  gateway:{...snapshot.gateway,total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),{management:{
   media:async()=>({jobs:mediaDemo?[{id:'00000000-0000-4000-8000-000000000002',kind:'video',state:'running',execution:{worker_id:'sparkA',operation_id:'00000000-0000-4000-8000-000000000001',active_job_id:'00000000-0000-4000-8000-000000000002',phase:'generating',native_progress:{connected:true,at:Date.now()-4000,node:'9',node_type:'KSampler',value:12,max:20},started_at:new Date(Date.now()-660000).toISOString(),changed_at:new Date(Date.now()-180000).toISOString(),heartbeat_at:new Date(Date.now()-2000).toISOString(),batch_index:2,batch_size:3}}]:[]}),
   read:async()=>registry(),
   act:async(action,input)=>{
@@ -168,8 +152,8 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     } else throw new Error('This screenshot demo does not run recovery. No real services are connected.');
     return registry();
   },
-},genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
-  handovers:{rows:[]}}),currentJobs,null,null,chatFactory?.(()=>({...snapshot,time:Date.now(),gateway_at:Date.now()}))??null,null,operations);
+},requestHistory:()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
+  handovers:{rows:[]}}),currentJobs});
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

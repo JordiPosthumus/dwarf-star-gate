@@ -1,4 +1,4 @@
-import {createQueueTools} from './genie-queue.mjs';
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -21,7 +21,7 @@ import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './
 import {createContinuityFetch} from './continuity-client.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
 import {evidence} from './dataset.mjs';
-import {Genie} from './genie.mjs';
+
 import {continuityForDisplay} from './continuity.mjs';
 
 async function until(fn, timeout = 3000) {
@@ -675,8 +675,8 @@ test('retired encoder configuration is ignored while numerical collection preser
 
 test('client metadata is recorded while queued, never changes body settings or reaches DS4',async t=>{
   const r=await rig(t,1,{dataset_enabled:true});
-  const first=r.request(JSON.stringify({stream:true,delay:400}),'busy');
-  await until(()=>r.backends[0].active===1);
+  const first=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
   const body=JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:131072});
   const header=JSON.stringify({schema:1,prompt_tokens_estimate:262144,turn_index:4,compaction_count:1,reasoning_effort:'low'});
   const second=r.request(body,'early',{headers:{'x-dsg-client-metadata':header}});
@@ -685,6 +685,7 @@ test('client metadata is recorded while queued, never changes body settings or r
   const event=read().find(e=>e.client_metadata?.status==='ready');
   assert.ok(!read().some(e=>e.request_id===event.request_id&&e.kind==='dispatch'));
   assert.equal(event.client_metadata.reasoning_effort,'low');
+  r.backends[0].heldStreams.shift()();
   assert.equal((await first).status,200);assert.equal((await second).status,200);
   assert.equal(r.backends[0].records[1].body.toString(),body);
   assert.equal(r.backends[0].records[1].headers['x-dsg-client-metadata'],undefined);
@@ -1551,23 +1552,7 @@ test('busy home queues FIFO, never spills to idle Spark', async t => {
   assert.deepEqual(r.backends[0].records.map(v => v.payload.tag), [1, 2]);
   assert.equal(r.backends[0].peak, 1); assert.equal(r.backends[1].records.length, 0);
 });
-test('core rebalances a mature affinity queue without Genie or dashboard',async t=>{
-  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:25});
-  await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
-  // The production sweep runs once per second. Keep the home occupied long
-  // enough to prove the core-owned sweep, rather than winning a timing race
-  // with the ordinary FIFO completion path.
-  const active=r.request('{"delay":1500,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
-  const body='{"queued":"a","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
-  await until(()=>r.gateway.nodes[0].queue.length===1);
-  assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'automatic_wait_threshold');
-  const result=await queued;await active;
-  assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
-  assert.equal(r.backends[1].records.at(-1).body.toString(),body);
-  assert.equal(r.gateway.stats().continuity.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');
-  assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,25);
-  assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
-});
+
 test('maintenance lock revokes a relocation offer and blocks mature automatic handover until explicit resume',async t=>{
   const r=await rig(t,2,{control_socket:true,genie_rebalance_min_wait_ms:0});
   const ctl=(route,body)=>workerControl(r.config.control_socket,route,body,{channel:'dashboard'});
@@ -1631,17 +1616,7 @@ test('operator-confirmed pre-dispatch handover preserves body, client, deadline 
   await until(()=>r.gateway.stats().dataset.finished>=2);await r.restart();
   assert.equal((await r.request('{}','a')).headers['x-ds4-node'],'spark2');
 });
-test('Genie can execute only an exact mature pre-dispatch relocation offer',async t=>{
-  const r=await rig(t,2,{control_socket:true,genie_rebalance_min_wait_ms:0});
-  await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
-  const active=r.request('{"delay":250,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
-  const queued=r.request('{"queued":"a"}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
-  const offer=r.gateway.stats().continuity.relocation.genie_offers[0];assert.equal(offer.destination_immediately_free,true);assert.equal(offer.cache_locality,'unknown');
-  await assert.rejects(workerControl(r.config.control_socket,'/genie-relocate-queued',{...offer,destination:'spark1'}),/evidence or policy changed/);
-  const input=Object.fromEntries(['request_id','source','destination','evidence_id'].map(key=>[key,offer[key]]));
-  const receipt=await workerControl(r.config.control_socket,'/genie-relocate-queued',input);assert.equal(receipt.actor,'genie');assert.equal(receipt.dispatch_state,'not_dispatched');
-  assert.equal((await queued).headers['x-ds4-node'],'spark2');await active;
-});
+
 test('queued handover refuses stale or unsafe evidence and persistence failure leaves work at home',async t=>{
   const r=await rig(t,2,{control_socket:true});
   await r.request('{}','a');await r.request('{}','b');await r.request('{}','c');
@@ -1899,53 +1874,13 @@ test('slow consumer receives the exact multi-megabyte stream without truncation'
   assert.equal(bytes, 128 * (32768 + 8) + 'data: [DONE]\n\n'.length);
 });
 
-test('Genie no-wait pool admission refuses a busy slot without queuing or reading its body upstream',async t=>{
-  const r=await rig(t,1);const running=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'occupied');await until(()=>r.backends[0].heldStreams?.length===1);
-  try{
-    const rejected=await r.request('{"private_advisory_body":"never dispatched"}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-no-wait':'1'}});
-    assert.equal(rejected.status,503);assert.equal(rejected.headers['x-dsg-dispatch-state'],'not_dispatched');assert.equal(r.gateway.nodes[0].queue.length,0);assert.equal(r.backends[0].records.length,1);
-  }finally{r.backends[0].heldStreams.shift()();await running;}
-  assert.equal((await r.request('{}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-no-wait':'1'}})).status,200);
-  assert.equal(r.backends[0].records.at(-1).headers['x-dsg-review-no-wait'],undefined);
-});
 
-test('Fast Genie keeps one undispatched review flexible and uses the first compatible worker to become free',async t=>{
-  const r=await rig(t,2),first=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy-one');await until(()=>r.backends[0].heldStreams?.length===1);
-  const second=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy-two');await until(()=>r.backends[1].heldStreams?.length===1);
-  const body=JSON.stringify({messages:[{role:'user',content:'Synthetic independent review'}],reasoning_effort:'low',max_tokens:8192});
-  const review=r.request(body,null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'}});
-  await until(()=>r.gateway.stats().continuity.waiting===1);
-  try{
-    assert.equal(r.gateway.stats().genie_flexible_assignment,true);assert.equal(r.gateway.stats().genie_admission_version,1);
-    assert.ok(r.gateway.nodes.every(node=>node.queue.length===0));assert.ok(r.backends.every(backend=>backend.records.length===1),'pending review did not reach either worker');
-    r.backends[1].heldStreams.shift()();const result=await review;assert.equal(result.headers['x-ds4-node'],'spark2');
-    assert.equal(r.backends[1].records[1].body.toString(),body);assert.equal(r.backends[1].records[1].headers['x-dsg-review-flexible'],undefined);
-    assert.equal(r.backends[0].records.length,1);assert.ok(r.gateway.nodes[0].active,'existing active work was not interrupted');assert.equal(r.backends[1].peak,1);
-  }finally{for(const backend of r.backends)for(const finish of backend.heldStreams.splice(0))finish();await Promise.allSettled([first,second,review]);}
-});
 
-test('waiting flexible Genie keeps FIFO arrival order among ordinary requests of the same priority',async t=>{
-  const r=await rig(t,1),b=r.backends[0];
-  const active=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
-  const earlier=r.request(JSON.stringify({label:'earlier'}),'earlier');await until(()=>r.gateway.stats().queued===1);
-  const genie=r.request(JSON.stringify({label:'genie'}),null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'}});await until(()=>r.gateway.stats().continuity.waiting===1);
-  const later=r.request(JSON.stringify({label:'later'}),'later');await until(()=>r.gateway.nodes[0].queue.length===2);
-  assert.deepEqual(b.records.map(row=>row.payload.label),['active']);
-  b.heldStreams.shift()();await Promise.all([active,earlier,genie,later]);
-  assert.deepEqual(b.records.map(row=>row.payload.label),['active','earlier','genie','later']);assert.equal(b.aborts,0);
-});
 
-test('Fast Genie respects a paused free worker and drops a cancelled pending review without dispatch',async t=>{
-  const r=await rig(t,2);r.gateway.drainNodes(['spark2'],true);
-  const running=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');await until(()=>r.backends[0].heldStreams?.length===1);
-  const controller=new AbortController(),review=fetch(`http://127.0.0.1:${r.address.port}/v1/chat/completions`,{method:'POST',headers:{authorization:'Bearer none','content-type':'application/json','x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'},body:'{}',signal:controller.signal});
-  const rejected=assert.rejects(review,error=>error.name==='AbortError');
-  try{
-    await until(()=>r.gateway.stats().continuity.waiting===1);assert.equal(r.backends[1].records.length,0);
-    controller.abort();await rejected;await until(()=>r.gateway.stats().continuity.waiting===0);
-    assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[1].records.length,0);assert.ok(r.gateway.nodes[0].active);
-  }finally{controller.abort();for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([running,rejected]);}
-});
+
+
+
+
 
 for(const cancelDuring of ['normalized_retry','conversion'])test(`vision cancellation during ${cancelDuring} does not report visual failure or guidance`,async t=>{
   let release,entered=false;
@@ -2170,13 +2105,7 @@ test('Pi model route restricts native choice to M3 and shared choice uses all id
  const runs=await Promise.all(['a','b','c'].map(key=>r.request('{"model":"pool","delay":80}',key,{headers:routedHeaders('pool')})));assert.deepEqual(new Set(runs.map(x=>JSON.parse(x.body).node)),new Set(['spark1','spark2','spark3']));
  const unknown=await r.request('{}',null,{headers:routedHeaders('bogus')});assert.equal(unknown.status,400);assert.match(unknown.body,/unknown_model_route/);
 });
-test('M3-only queue cannot relocate to an idle Spark, including operator and Genie offers',async t=>{
- const r=await routedRig(t);const active=r.request('{"model":"m3","delay":200}','first',{headers:routedHeaders('m3')});await until(()=>r.backends[2].active===1);
- const queued=r.request('{"model":"m3"}','second',{headers:routedHeaders('m3')});await delay(35);
- assert.equal(r.backends[0].records.length+r.backends[1].records.length,0);
- const registry=await workerControl(r.config.control_socket,'/workers');assert.equal(registry.queued_relocation.offers.length,0);
- await active;assert.equal(JSON.parse((await queued).body).node,'spark3');
-});
+
 test('M3-only request waits while M3 paused then resumes on M3 without fallback',async t=>{
  const r=await routedRig(t);await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark3']});
  const pending=r.request('{"model":"m3"}','wait-m3',{headers:routedHeaders('m3')});await delay(40);assert.ok(r.backends.every(b=>b.records.length===0));
@@ -2442,15 +2371,7 @@ test('priority edit applies to parked work without overriding its unavailable wo
   r.gateway.drainNodes(['spark1'],false);assert.equal((await waiting).status,200);
 });
 
-test('a high-priority flexible Genie request gets the next free worker ahead of lower queued work',async t=>{
-  const r=await rig(t,1),b=r.backends[0];
-  const held=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
-  const lower=r.request(JSON.stringify({label:'normal'}),'normal');await until(()=>r.gateway.stats().queued===1);
-  const genie=r.request(JSON.stringify({label:'genie'}),null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1','x-dsg-priority':'high'}});
-  await until(()=>r.gateway.currentJobsStatus().jobs.length===3);assert.equal(b.aborts,0);
-  b.heldStreams.shift()();await Promise.all([held,lower,genie]);
-  assert.deepEqual(b.records.map(row=>row.payload.label),['active','genie','normal']);assert.equal(b.aborts,0);
-});
+
 
 test('a full worker queue does not let lower work take the newly free slot before accepted high-priority waiting work',async t=>{
   const r=await rig(t,1,{max_queued_per_node:1}),b=r.backends[0];
@@ -2462,13 +2383,7 @@ test('a full worker queue does not let lower work take the newly free slot befor
   assert.deepEqual(b.records.map(row=>row.payload.label),['active','high','normal']);assert.equal(b.peak,1);assert.equal(b.aborts,0);
 });
 
-test('Genie progress correlates queued and dispatched requests without exposing other call IDs',{timeout:10000},async t=>{
- const r=await rig(t,1),normalCall=randomUUID(),genieCall=randomUUID();
- const normal=r.request(JSON.stringify({delay:250}),'normal',{headers:{'x-dsg-call-id':normalCall}});await until(()=>r.backends[0].active===1);
- const genie=r.request(JSON.stringify({delay:250}),'genie',{headers:{'x-dsg-observer':'gate-genie','x-dsg-call-id':genieCall}});await until(()=>r.gateway.currentJobsStatus().jobs.length===2);
- const before=r.gateway.currentJobsStatus();assert.equal(before.genie_progress_version,1);assert.ok(Number.isFinite(before.observed_at));const queued=before.jobs.find(j=>j.call_id===genieCall);assert.equal(queued.state,'queued');assert.equal(queued.traffic_class,'genie');assert.equal(queued.request_preview,null);assert.equal(before.jobs.find(j=>j.traffic_class==='unclassified').call_id,null);
- await normal;await until(()=>r.gateway.currentJobsStatus().jobs.some(j=>j.call_id===genieCall&&j.state==='running'));const running=r.gateway.currentJobsStatus().jobs.find(j=>j.call_id===genieCall);assert.equal(running.request_id,queued.request_id);assert.equal(running.machine,'spark1');assert.equal(r.backends[0].records.at(-1).headers['x-dsg-call-id'],undefined);await genie;assert.equal(r.backends[0].aborts,0);assert.equal(r.gateway.currentJobsStatus().jobs.length,0);
-});
+
 
 test('oldest queue telemetry follows creation time while shadow follows priority eligibility',async t=>{
   const r=await rig(t,2,{dataset_enabled:true,routing_shadow_enabled:true});
@@ -2492,35 +2407,7 @@ test('oldest queue telemetry follows creation time while shadow follows priority
 });
 
 
-test('two waiting jobs wake Genie before the timer and an exact move preserves running work',async t=>{
-  const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
-  for(const key of ['a','b','c','d','e'])await r.request('{}',key);
-  const active=r.request('{"stream":true,"fixture_hold_stream":true}','c');
-  await until(()=>r.backends[0].heldStreams?.length===1);
-  const body='{"queued":"a","reasoning_effort":"xhigh","max_tokens":262144}';
-  const first=r.request(body,'a');await until(()=>r.gateway.nodes[0].queue.length===1);
-  assert.equal(r.gateway.stats().continuity.relocation.genie_offers.length,0,'one waiting job still uses the timer');
-  const second=r.request('{"queued":"e"}','e');await until(()=>r.gateway.nodes[0].queue.length===2);
-  let calls=0,actions=0;
-  const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>({gateway:{...r.gateway.stats(),continuity:continuityForDisplay(r.gateway.stats().continuity)},devices:[],events:[]}),{
-    rebalance:async input=>{actions++;return workerControl(r.config.control_socket,'/genie-relocate-queued',input);},
-    fetchImpl:async(_url,options)=>{
-      calls++;const {evidence}=JSON.parse(JSON.parse(options.body).messages[1].content);
-      const offer=evidence.continuity.relocation.genie_offers[0];
-      assert.equal(offer.trigger,'queue_pressure');assert.equal(offer.source_queued,2);assert.ok(offer.waiting_seconds<60);
-      assert.equal(evidence.continuity.relocation.diagnostics.sources[0].genie_pressure,true);
-      return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'Use the idle worker for the waiting job.',ticker:[{severity:'info',text:'Queue pressure warrants one move.',recommendation:null,evidence_refs:['fleet']}],relocation_requests:[Object.fromEntries(['request_id','source','destination','evidence_id'].map(k=>[k,offer[k]]))]})}}]});
-    }
-  });
-  try{
-    g.attempt=Date.now();g.tick();await until(()=>!g.busy);
-    assert.equal(calls,1);assert.equal(actions,1);assert.equal(g.status().reports[0].actions_taken[0].state,'relocated');
-    assert.equal((await first).headers['x-ds4-node'],'spark2');assert.equal(r.backends[1].records.at(-1).body.toString(),body);
-    assert.equal(r.gateway.nodes[0].active.key,createHash('sha256').update('c').digest('hex'));
-    assert.equal(r.backends[0].aborts,0);assert.equal(r.gateway.nodes[0].queue.length,1);
-    assert.equal(r.gateway.stats().continuity.relocation.genie_offers.length,0,'pressure bypass disappears when queue drops below two');
-  }finally{g.close();r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
-});
+
 
 test('queue pressure respects maintenance and same-session work, and stale pressure cannot authorize a move',async t=>{
   const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
@@ -2653,44 +2540,12 @@ test('worker capacity edits require idle pause, reject stale values and preserve
   const changed=await edit({...input,expected_max_concurrent_requests:2,max_concurrent_requests:1});assert.equal(changed.workers[0].max_concurrent_requests,1);assert.equal(changed.workers[0].drained,true);
 });
 
-test('flexible Genie can use a spare slot while an earlier dependent turn waits for its active conversation',async t=>{
-  const r=await rig(t,1,{workerConcurrency:2}),b=r.backends[0];
-  const active=r.request('{"wait_for_release":true}','same');await until(()=>b.releases?.length===1);
-  const dependent=r.request('{"label":"next"}','same');await until(()=>r.gateway.stats().queued===1);
-  const genie=r.request('{"wait_for_release":true}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'}});
-  try{await until(()=>b.active===2);assert.equal(r.gateway.stats().queued,1);assert.equal(b.records.length,2);}
-  finally{b.releases?.splice(0).forEach(release=>release());}
-  assert.ok((await Promise.all([active,dependent,genie])).every(reply=>reply.status===200));assert.equal(b.peak,2);assert.equal(b.aborts,0);
-});
-
-test('concurrent Genie replies retain independent running and queued progress identities',{timeout:10000},async t=>{
- const r=await rig(t,1,{workerConcurrency:2}),b=r.backends[0],ids=[randomUUID(),randomUUID(),randomUUID()];
- const send=i=>r.request('{"wait_for_release":true}','genie-'+i,{headers:{'x-dsg-observer':'gate-genie','x-dsg-call-id':ids[i]}});
- const a=send(0);await until(()=>b.active===1);const c=send(1);await until(()=>b.active===2);const queued=send(2);await until(()=>r.gateway.stats().queued===1);
- const before=r.gateway.currentJobsStatus();assert.equal(before.jobs.length,3);assert.deepEqual(ids.map(id=>before.jobs.find(j=>j.call_id===id).state),['running','running','queued']);assert.equal(new Set(before.jobs.map(j=>j.request_id)).size,3);
- b.releases.shift()();await a;await until(()=>b.releases.length===2);const after=r.gateway.currentJobsStatus();assert.equal(after.jobs.some(j=>j.call_id===ids[0]),false);assert.deepEqual(ids.slice(1).map(id=>after.jobs.find(j=>j.call_id===id).state),['running','running']);assert.equal(r.gateway.stats().active,2);
- b.releases.splice(0).forEach(release=>release());await Promise.all([c,queued]);assert.equal(b.aborts,0);assert.equal(r.gateway.stats().active,0);
-});
 
 
-test('conversational queue tool uses real core offers and preserves active streams',async t=>{
-  const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
-  for(const key of ['a','b','c','d','e'])await r.request('{}',key);
-  const active=r.request('{"stream":true,"fixture_hold_stream":true}','c');await until(()=>r.backends[0].heldStreams?.length===1);
-  const first=r.request('{"queued":"a","max_tokens":262144}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
-  const second=r.request('{"queued":"e"}','e');await until(()=>r.gateway.nodes[0].queue.length===2);
-  const q=createQueueTools({read:async()=>r.gateway.stats(),move:input=>workerControl(r.config.control_socket,'/genie-relocate-queued',input)});
-  try {
-    const s=await q.tool({action:'status'});assert.equal(s.offers[0].trigger,'queue_pressure');
-    const input={action:'move',...Object.fromEntries(['request_id','source','destination','evidence_id'].map(k=>[k,s.offers[0][k]]))};
-    await workerControl(r.config.control_socket,'/genie-capability',{key:'rebalance',enabled:false});
-    await assert.rejects(q.tool(input),/evidence or policy changed/);assert.equal(r.gateway.nodes[0].queue.length,2);
-    await workerControl(r.config.control_socket,'/genie-capability',{key:'rebalance',enabled:true});
-    const moved=await q.tool(input);assert.equal(moved.state,'relocated');assert.equal(moved.receipt.actor,'genie');assert.equal(moved.receipt.deadline_preserved,true);assert.equal(moved.receipt.body_replayed,false);
-    assert.equal((await first).headers['x-ds4-node'],'spark2');assert.equal(r.backends[0].aborts,0);assert.ok(r.gateway.nodes[0].active);assert.equal(r.gateway.nodes[0].queue.length,1);
-    await assert.rejects(q.tool(input),/evidence or policy changed/);assert.equal((await q.tool({action:'status'})).last_move.request_id,input.request_id);
-  } finally {r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
-});
+
+
+
+
 test('direct-reserve control persists and engine activity without gate jobs soft-excludes a worker',async t=>{
   const r=await rig(t,2,{control_socket:true,direct_reserve:{release_ms:60000}}),ctl=b=>workerControl(r.config.control_socket,'/set-direct-reserve',b);
   // Off by default; enable through the control route and verify persistence.
@@ -2743,4 +2598,50 @@ test('genie thinking saves to the store, reports effective levels with source an
   assert.equal(r.gateway.stats().genie_thinking.chat,'max','unchanged key persists');
   await assert.rejects(()=>workerControl(r.config.control_socket,'/set-genie-thinking',{chat:'ultra'}),/must be one of/);
   await assert.rejects(()=>workerControl(r.config.control_socket,'/set-genie-thinking',{}),/chat, reviewer or both/);
+});
+
+
+test('authenticated native Genie takes the next slot ahead of high priority without interrupting active work',async t=>{
+  const r=await rig(t,1,{genie_priority_key:'fixture-genie-key'}),b=r.backends[0];
+  const active=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');
+  await until(()=>b.heldStreams?.length===1);
+  const high=r.request(JSON.stringify({label:'ordinary-high'}),'ordinary-high',{headers:{'x-dsg-priority':'high'}});
+  await until(()=>r.gateway.stats().queued===1);
+  const fake=r.request(JSON.stringify({label:'ordinary-header'}),'ordinary-header',{headers:{'x-dsg-observer':'gate-genie','x-stargate-genie-key':'wrong'}});
+  await until(()=>r.gateway.stats().queued===2);
+  const body=JSON.stringify({label:'native-genie',max_tokens:153600,reasoning_effort:'max'});
+  const genie=r.request(body,undefined,{headers:{'x-stargate-genie-key':'fixture-genie-key'}});
+  await until(()=>r.gateway.stats().queued===3);
+  assert.equal(b.records.length,1);assert.equal(b.aborts,0);
+  b.heldStreams.shift()();
+  const replies=await Promise.all([active,high,fake,genie]);
+  assert.ok(replies.every(reply=>reply.status===200));
+  assert.deepEqual(b.records.map(row=>row.payload.label),['active','native-genie','ordinary-high','ordinary-header']);
+  assert.equal(b.records[1].body.toString(),body);
+  assert.equal(b.records[1].headers['x-stargate-genie-key'],undefined);
+  assert.equal(b.aborts,0);
+});
+
+test('native Genie uses a free compatible worker while another is busy',async t=>{
+  const r=await rig(t,2,{genie_priority_key:'fixture-genie-key'}),b=r.backends[0];
+  const active=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');
+  await until(()=>b.heldStreams?.length===1);
+  const genie=await r.request(JSON.stringify({label:'native-genie'}),undefined,{headers:{'x-stargate-genie-key':'fixture-genie-key'}});
+  assert.equal(genie.status,200);assert.equal(genie.headers['x-ds4-node'],'spark2');
+  assert.equal(b.heldStreams.length,1);assert.equal(b.aborts,0);
+  b.heldStreams.shift()();await active;
+});
+
+test('worker removal survives restart with dormant model routes and serving profiles preserved',async t=>{
+  const profile={context_window:262144,max_output_tokens:262144,input:['text','image'],reasoning:true,defaults:{temperature:1,top_p:0.95,top_k:20,min_p:0,presence_penalty:0,repetition_penalty:1,chat_template_kwargs:{enable_thinking:true,preserve_thinking:true,reasoning_effort:'xhigh'}}};
+  const r=await rig(t,2,{control_socket:true,model_routes:{old:['spark1'],current:['spark2']},serving_profiles:{spark1:profile}});
+  await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark1']});
+  await workerControl(r.config.control_socket,'/remove-worker',{id:'spark1'});
+  await r.restart();
+  assert.deepEqual(r.gateway.nodes.map(n=>n.id),['spark2']);
+  assert.deepEqual(r.gateway.stats().serving_profiles.spark1,profile);
+  const reply=await r.request(JSON.stringify({label:'after-restart'}),undefined,{headers:{'x-dsg-model':'current'}});
+  assert.equal(reply.status,200);assert.equal(reply.headers['x-ds4-node'],'spark2');
+  assert.equal(r.backends[0].records.length,0);
+  assert.deepEqual(r.config.model_routes,{old:['spark1'],current:['spark2']});
 });

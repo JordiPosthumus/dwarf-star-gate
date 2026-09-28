@@ -51,27 +51,30 @@ export function recordsForChat(value){
     scope:'Dated configuration records, not continuous engine inspection. Observed and proposed records are not approval. No record gives this chat permission to act.'};
 }
 export class ServerRecords {
-  constructor(directory){this.directory=directory?path.resolve(directory):null;}
+  constructor(directory){this.directory=directory?path.resolve(directory):null;this.cache=new Map();}
   snapshot(workerIds=[]){
     if(!this.directory)return {configured:false,records:[]};
     const records=[],unavailable=[];
     for(const id of [...new Set(workerIds)].filter(id=>ID.test(id))){
       const row={worker_id:id};
       for(const kind of KINDS){
-        row[kind]=null;let fd;
+        row[kind]=null;let fd;const key=id+':'+kind;
         try{
           const folder=path.join(this.directory,kind),file=path.join(folder,id+'.json');
           // No symlink traversal into a credential file or unrelated directory.
           if(fs.lstatSync(this.directory).isSymbolicLink()||fs.lstatSync(folder).isSymbolicLink())throw new Error();
           fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);const stat=fs.fstatSync(fd);
           if(!stat.isFile()||stat.size>1024*1024)throw new Error();
+          const stamp=fs.fstatSync(fd,{bigint:true}),signature=[stamp.dev,stamp.ino,stamp.size,stamp.mtimeNs,stamp.ctimeNs].join(':');
+          const saved=this.cache.get(key);if(saved?.signature===signature){row[kind]=structuredClone(saved.summary);continue;}
           // Read only the checked length; never wait on a FIFO or follow growth.
           const bytes=Buffer.alloc(stat.size);let offset=0;
           while(offset<bytes.length){const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(n<=0)throw new Error();offset+=n;}
           const after=fs.fstatSync(fd);if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs)throw new Error();
           const value=JSON.parse(bytes);
           row[kind]=recordSummary(value,kind,id,createHash('sha256').update(bytes).digest('hex'));
-        }catch(error){if(error.code!=='ENOENT')unavailable.push({worker_id:id,kind});}
+          this.cache.set(key,{signature,summary:structuredClone(row[kind])});
+        }catch(error){this.cache.delete(key);if(error.code!=='ENOENT')unavailable.push({worker_id:id,kind});}
         finally{if(fd!==undefined)fs.closeSync(fd);}
       }
       records.push(row);

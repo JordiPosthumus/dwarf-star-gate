@@ -270,7 +270,7 @@ test('reference shortcut transfers retained input before native submission on th
  const r=cycleFixture(t),stream=Readable.from(['portable-image']);stream.headers={'content-type':'image/png','content-length':'14'};
  const input=await r.jobs.inputs.receive(stream),job=r.jobs.enqueue('video',{prompt:'Animate <Picture 1>.',reference_image:input.id,seed:42},{key:'portable-shortcut'}).job;
  r.plan.operation_id=job.id;
- const request=r.backend.request;r.backend.request=async route=>route==='/object_info'?Object.fromEntries(Object.values(job.payload.prompt).map(n=>[n.class_type,{}])):request(route);
+ const request=r.backend.request;r.backend.request=async route=>route==='/object_info'?Object.fromEntries(Object.values(job.payload.prompt).map(n=>[n.class_type,n.class_type==='LoadImage'?{input:{required:{image:[['top-level.png'],{image_upload:true}]}}}:{}])):request(route);
  r.backend.uploadInput=async(blob,name)=>{r.events.push('upload-shortcut');assert.equal(name,input.name);assert.equal(await blob.text(),'portable-image');};
  const submit=r.backend.submit;r.backend.submit=async(payload,id)=>{r.events.push('submit-shortcut');assert.deepEqual(payload.prompt['7'].inputs['ref_images.ref_image_0'],['5',0]);assert.equal(payload.prompt['5'].inputs.image,input.name);assert.equal(payload.input_files,undefined);return submit(payload,id);};
  await runMediaCycle(r.plan,r.io);
@@ -286,4 +286,27 @@ test('native step receipts are display-only, clear for restoration and cannot co
  assert.equal(observations,2,'100% node progress is not native job completion');assert.equal(r.submissions(),1);assert.equal(closed,1);
  assert.ok(receipts.some(r=>r.phase==='generating'&&r.native_progress.value===20));
  assert.ok(receipts.filter(r=>['retaining_results','restoring_llm','checking_llm','returned'].includes(r.phase)).every(r=>r.native_progress===null));
+});
+
+test('paired execution sends a retained rank engine to its rank host and keeps the head endpoint for return',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1',backend:'openai'};
+ f.config.recovery.workers=[];f.engine.member=1;
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:worker.id,url:worker.url},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const service=createMediaExecution(f.config,f.jobs,{workers:()=>[worker,{id:'other'}],isEnabled:()=>true,matchesWorker:()=>false,launchRunner:async()=>({pid:1})});
+ await service.start({job_id:f.job.id,worker_id:'one'});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.equal(plan.host,'fixture-rank');assert.equal(plan.llm_container,'rank');assert.equal(plan.llm_pair.media_member,1);assert.deepEqual(plan.endpoint,worker);assert.deepEqual(plan.separate_workers,['other']);
+});
+
+test('explicit physical member selects its qualified engine and cannot retarget an accepted job',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1'};
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:worker,members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const rank={...f.engine,container:'d'.repeat(64),member:1};
+ f.config.media_jobs.workers.one.member_engines={1:{video:rank}};
+ let launches=0;const service=createMediaExecution(f.config,f.jobs,{workers:()=>[worker],isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:1};}});
+ await service.start({job_id:f.job.id,worker_id:'one',member:1});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.equal(plan.host,'fixture-rank');assert.equal(plan.engine.container,rank.container);assert.equal(f.config.media_jobs.workers.one.engines.video.container,f.engine.container);
+ await assert.rejects(service.start({job_id:f.job.id,worker_id:'one',member:0}),/another worker/);
+ await service.start({job_id:f.job.id,worker_id:'one',member:1});assert.equal(launches,1);
 });

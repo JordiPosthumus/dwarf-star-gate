@@ -1,10 +1,10 @@
 import {Transform, PassThrough} from 'node:stream';
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const sampling = ['temperature','top_p','top_k','min_p','presence_penalty','repetition_penalty'];
-export function servingProfiles(raw = {}, workers = []) {
+export function servingProfiles(raw = {}, workers = [], {allowUnregistered=false} = {}) {
   if (!object(raw)) throw new Error('serving_profiles must be an object');
   for (const [id,p] of Object.entries(raw)) {
-    if (!workers.some(w=>w.id===id) || !object(p) || Object.keys(p).some(k=>!['defaults','context_window','max_output_tokens','input','reasoning'].includes(k))) throw new Error('Invalid serving profile worker or field');
+    if ((!allowUnregistered&&!workers.some(w=>w.id===id)) || !object(p) || Object.keys(p).some(k=>!['defaults','context_window','max_output_tokens','input','reasoning'].includes(k))) throw new Error('Invalid serving profile worker or field');
     if (p.context_window!==262144 || p.max_output_tokens!==262144 || p.reasoning!==true || JSON.stringify(p.input)!=='["text","image"]') throw new Error('Invalid Qwen serving profile capabilities');
     if (!object(p.defaults) || Object.keys(p.defaults).some(k=>![...sampling,'chat_template_kwargs'].includes(k))) throw new Error('Invalid serving profile defaults');
     for (const k of sampling) if (typeof p.defaults[k]!=='number'||!Number.isFinite(p.defaults[k])) throw new Error('Invalid sampling default');

@@ -42,7 +42,10 @@ export class RatePeaks {
       for(const name of this.cursors.keys())if(!files.includes(name))this.cursors.delete(name);
       for(const name of files){
         if(budget===0){backlog=true;break;}
-        const fd=fs.openSync(path.join(this.directory,name),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+        const file=path.join(this.directory,name),named=fs.lstatSync(file,{bigint:true});if(!named.isFile())throw new Error();
+        const stamp=[named.dev,named.ino,named.size,named.mtimeNs,named.ctimeNs].join(':');
+        if(this.cursors.get(name)?.stamp===stamp)continue;
+        const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
         try{
           const stat=fs.fstatSync(fd);if(!stat.isFile())throw new Error();
           const identity=`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;let c=this.cursors.get(name);
@@ -59,6 +62,7 @@ export class RatePeaks {
           }
           c.fragment=Buffer.from(buffer.subarray(from));if(c.fragment.length>65536||c.skipping){c.fragment=Buffer.alloc(0);c.skipping=true;}
           c.anchor=Buffer.alloc(Math.min(64,c.offset));if(c.anchor.length)fs.readSync(fd,c.anchor,0,c.anchor.length,c.offset-c.anchor.length);
+          if(c.offset===stat.size)c.stamp=stamp;
           if(c.offset<stat.size){backlog=true;break;}
         }finally{fs.closeSync(fd);}
       }

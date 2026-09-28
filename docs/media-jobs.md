@@ -1,4 +1,4 @@
-# Media jobs — implementation in progress
+# Media jobs and per-machine setup
 
 These endpoints provide the durable queue and retained downloads. Downloads support
 single HTTP byte ranges, including open-ended and suffix ranges, so players can
@@ -10,8 +10,7 @@ original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
 return. A real ACE-Step XL/4B music cycle has also passed: normal API submission
 woke Genie automatically, he assigned the host, and the runner generated audio,
-retained it and verified LLM return. The Media view now exposes saved host choices and job results. Read-only resource checks are available; native memory-fit qualification and
-complete fresh-host installation remain in progress.
+retained it and verified LLM return. The Media view exposes saved host choices, per-member engine inventories and job results. Existing-host setup has passed native generation, retained-output decoding and verified LLM return on connected Sparks. Each installation still needs its own qualification; these receipts do not establish installation on pristine hardware.
 
 Genie can select a finite batch when `media_job_status` reports
 `batch_jobs_supported`: `start_media_job` accepts optional `following_job_ids`
@@ -127,8 +126,7 @@ These behaviors are verified against HTTP fixtures. An installed H3 engine has
 also generated real H.264 video and FLAC audio through an isolated gateway;
 both retained downloads matched their size/hash receipts after H3 stopped.
 The connected production path also passed with actual Genie status/start/status
-calls, real media output and verified LLM return. Automatic queue wakeup is
-enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
+calls, real media output and verified LLM return. Automatic queue wakeup is available when its capability and dispatch settings are enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
 scripted model. Production music arrival has since exercised the automatic
 watcher, actual Genie tool calls, native ACE-Step generation, authenticated audio
 download after engine shutdown and automatic original-LLM readmission. This
@@ -157,7 +155,7 @@ capability switch controls new assignments; turning it off does not cancel an
 accepted operation or prevent the runner from returning its host. Queue intake
 and downloads remain available while execution is off.
 
-While the media capability is on, the existing ten-second dashboard tick wakes
+While the media capability is on and `media_jobs.automatic_dispatch` is not false, the existing ten-second dashboard tick wakes
 Genie for actionable queued jobs. He studies current fleet demand and
 chooses the host through the same tools as chat. Decisions appear in an
 **Automatic media dispatch** conversation. The watcher waits for active chat to
@@ -369,12 +367,7 @@ unverified for these Spark recipes.
 Observations carry their timestamp. The Media page keeps them until dashboard
 restart; Genie's actual tool receipts remain with the conversation. Failed
 inspection is shown explicitly, not as fresh readiness. Runtime memory fit
-requires a native generation check using the selected configuration. A
-recipe-driven setup action is now connected in source for eligible existing
-workers, with the controls now deployed through a coordinated core/dashboard
-update. Complete native qualification of this new whole workflow remains
-outstanding. The separate New Spark setup workflow remains
-for explicitly enrolled idle new hosts.
+requires a native generation check using the selected configuration. The recipe-driven setup action is available for eligible existing workers. Native setup has passed on connected Sparks, including a newly prepared ACE-Step installation and retained Docker-engine reuse; qualification remains specific to the selected engine and physical member. The separate New Spark setup workflow is for explicitly enrolled idle new hosts.
 
 The existing-worker setup lifecycle uses a separate detached runner, connected
 to **Set up ACE-Step / MiniMax H3** in Media and Genie's `setup_media_host` tool.
@@ -401,12 +394,7 @@ finishes. A replacement machine cannot inherit saved engines from the previous
 machine; the prior records remain in the timestamped state backup. Older records
 without a physical-machine binding retain their original exact-binding check.
 
-Lifecycle, retained enrollment/restart, private control routes and UI controls
-have fixture tests. The pinned Hermes runtime has called the setup tool and its
-actual receipt remains in chat. These checks do not yet establish complete native
-existing-host installation. Production activation preserved existing capability
-and placement choices, private settings and active maintenance locks. The
-continuity Door stayed running; the core finished admitted work before replacement.
+Lifecycle, retained enrollment/restart, private control routes and UI controls have fixture tests. The actual Genie has also called the setup tool on connected hardware: native media generation, full decoding, current paired-LLM restoration and final enrollment passed. These receipts establish those installations, separately from the fixture tests and from pristine-host acceptance. Guarded control-service activation keeps the continuity Door running and drains admitted work before replacing the core.
 
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs
@@ -436,6 +424,14 @@ unsupported H3 reference indices before generation is submitted. These checks
 need a running engine; they are not all pre-allocation checks. Valid raw graphs
 are not rewritten, and generation settings are not reduced automatically.
 
+The stock `LoadImage.image` upload dropdown is not an authoritative file list:
+ComfyUI lists top-level input files there, while its native validator accepts
+subfolders. Star Gate therefore leaves this field's file validation to native
+`POST /prompt`, including uploaded `stargate/...` references. Missing or invalid
+files still receive the native node error; upload association and transfer checks
+remain in place. Other combo values, including model filenames, remain checked
+against the live catalog.
+
 ACE-Step HTTP validation errors retain the field location and reason. Native
 failed-task messages are shown rather than a generic generation failure. An
 unreadable reply or a cache timeout that still contains a running task remains
@@ -459,3 +455,200 @@ aliases for files already present on the selected ACE-Step host. Multipart field
 names such as `ref_audio` in JSON, or nonempty video `input_files`, are rejected
 with an explanation rather than silently ignored. Automatic music reference
 upload/transfer is not implemented by this check.
+
+
+### Existing paired GLM workers
+
+An operator can enroll `media_jobs.pairs[worker_id]` with kind
+`glm53-docker-pair`, its served `model`, the exact `worker_binding` route
+(`id`, `url`, and any `ssh`, `ssh_fallbacks`, `remote_port` fields), and two
+`members` in head/rank order. Each member names an enrolled `ssh` target and
+Docker `container`; the head must match its server-inspection enrollment.
+Include the head's `recipe_root` to retain and guard its launcher files.
+This is trusted local configuration, never model-provided shell input.
+
+For your own worker names, configure `machine_groups` to describe shared hardware:
+for example `{"my-pair":["gpu-a","gpu-b"],"other-model-on-a":["gpu-a"]}`.
+Use the same physical IDs for every route or SSH alias on a machine. Media uses
+these groups to prevent treating another model on borrowed hardware as the LLM
+that must remain available. If groups are absent, configured pair member SSH
+targets and single-worker inspection SSH targets supply the hardware identity;
+different aliases require explicit groups.
+
+`engine_members: {"video": 0, "music": 1}` supplies default setup destinations;
+omitted assignments use the head. For a standard configuration with both engines
+on every physical Spark, call `setup_media_host` for each engine with `member: 0`
+and `member: 1`. These are indices into your configured pair, never fixed hostnames.
+For example, `{"worker_id":"my-pair","engine":"h3","member":1}` sets up H3
+on your rank member. Repeat with `engine: "ace-step"` for music.
+
+`inspect_media_host`, `inspect_media_inputs`, and `start_media_job` accept the same
+optional `member`. Status exposes separate `members[].engines` inventories; an
+installation on one member does not qualify the other. Each setup retains its
+own native proof and survives service restarts. A repeated setup observes its
+existing operation without launching again. The first qualified engine may
+become the default if none exists; adding another member never replaces an
+existing default. Calls without `member` keep the existing default behavior.
+Retained per-member engines are stored separately from default selections.
+
+To reuse a previous Star Gate media preparation on the same physical host,
+operators can configure `media_jobs.reuse[worker_id][member][engine]` with its
+absolute remote `directory` and exact `container`, `image`, `kind`, and `port`
+from the retained preparation receipt. `engine` is `h3` or `ace-step`; `kind` is
+`comfyui` or `ace-step`. This trusted configuration selects a candidate, not a
+qualified enrollment. Normal setup still drains the current LLM, verifies the
+retained container and source receipt, generates and fully decodes new output,
+and restores the current LLM before enrollment. It preserves the old source
+directory, model files, image and container instead of building a duplicate.
+Changed or missing source evidence refuses reuse and returns the current LLM;
+it does not silently fall back to rebuilding or replacing the old engine.
+
+For an existing Docker installation made outside Star Gate, replace `directory`
+with `"source":"docker"` and pin the same four engine fields. This path observes
+the exact stopped container and its native port, snapshots its complete Docker
+configuration, and performs the same fresh qualification and current-LLM return.
+It does not rewrite the existing launch command, mounts, image or model files.
+
+The existing `setup_media_host` and `start_media_job` tools then borrow the
+whole pair. They retain both complete Docker configurations and file backups,
+drain the virtual worker, require a serving LLM on separate machines, stop both
+originals by ID, and run media on the selected member. Return starts the original rank
+before the original head. Changed settings or mounted files prevent automatic
+return; uncertainty retains the maintenance hold. Native model metadata and a
+readiness response must pass before readmission. That response is a serving
+check, not a new performance benchmark or cache comparison.
+
+H3 and ACE-Step setup still installs each selected engine separately and
+requires native output retention and full decoding before saving enrollment.
+Paired support does not enroll, start, or migrate any machine on installation.
+Keep `media_jobs.automatic_dispatch: false` when only explicit media tool calls
+are wanted. The Media capability still controls those calls; this additional
+setting prevents the dashboard from waking Genie for queued media jobs.
+
+
+Retained preparations can outlive the LLM that originally created them. Reuse
+checks the selected engine's original image, command, port and mounts while
+pinning the current LLM for this operation. The old LLM identity remains in the
+provenance receipt; its container does not need to exist. Source records remain
+unchanged, and the normal idle and current-LLM return checks still apply.
+
+If read-only preflight fails before any maintenance, stop or preparation intent,
+correct the cause and pass its exact saved `at` value as `expected_failed_at` to
+`setup_media_host` (or use **Retry setup** in Media). The executor confirms that
+the runner exited and the target binding is unchanged, archives the full failed
+attempt, then retries under the same operation ID. Ordinary repeated calls only
+observe it. A stale timestamp, live runner, uncertain failure or any transition
+intent refuses retry; inspect that operation instead. This never reruns an
+uncertain native installation or generation.
+
+
+### Maintain an owner-selected standard
+
+Set `media_jobs.standard.enabled` to true and provide explicit `targets`, for
+example:
+
+```json
+{
+  "enabled": true,
+  "targets": [
+    {"worker_id": "my-pair", "member": 0, "engine": "h3"},
+    {"worker_id": "my-pair", "member": 0, "engine": "ace-step"},
+    {"worker_id": "my-pair", "member": 1, "engine": "h3"},
+    {"worker_id": "my-pair", "member": 1, "engine": "ace-step"}
+  ]
+}
+```
+
+This is standing authority to set up those engines through Genie. It preserves
+placement choices and the Media capability; neither is switched on implicitly.
+The existing dashboard tick compares this standard with separate per-member
+enrollments, waits for idle capacity and wakes the actual Genie for the next
+missing engine. Saved observations and chat request identities survive reloads.
+Native setup still enforces its own reservation, resource, qualification and LLM
+return checks. `media_job_status` and the dashboard media API expose
+`standard_setup`; a recorded enrollment does not mean a server is currently running.
+
+Long-running operations are observed without resubmission. A qualified return
+with unfinished enrollment wakes Genie to finish that same operation. A failed
+or uncertain operation gets one read-only diagnosis per changed failure; it is
+never automatically replayed. Other eligible targets can continue. An ended
+Genie reply with no observed setup is reported as needing attention. This loop
+is independent of `automatic_dispatch`, which controls queued media jobs.
+
+Resource inspection also reports a bounded, read-only inventory of Docker
+containers publishing native media ports. These are candidates, not qualification
+or permission to replace an engine. Missing observations remain unknown; private
+container environments and commands are excluded.
+
+This standard watcher covers enrolled media setup. It does not yet autonomously
+select, qualify and promote arbitrary upstream recipe releases. That improvement
+loop is a separate requirement; having trial and rollout tools is insufficient.
+
+A configured reuse candidate can be corrected after a confirmed read-only
+preflight failure. The executor requires the worker, LLM, physical members and
+inspection/recovery binding to remain identical. Older operation records gain
+that separate infrastructure identity only while their original complete
+configuration still matches. Only an exited attempt with no maintenance, stop or
+preparation intent becomes eligible for retry.
+
+For an owner-enabled standard target, Genie can call `repair_media_setup` with
+its exact saved failure timestamp. A fixed native reader verifies the current
+LLM identity and running state, then requires a complete bounded Docker inventory
+to prove the old media container absent. It selects a unique stopped container
+with a recognized native engine command and port. Active, unknown, ambiguous or
+unsupported candidates refuse correction. With no candidate, it selects a
+separate fresh preparation; old model files, images, directories and receipts
+remain intact. It never starts or stops a service during source selection.
+The shipped H3 entrypoint, directly or behind its exact `tini` wrapper, is a
+recognized candidate only in its expected ComfyUI working directory. Recognition
+does not qualify the models or generated media. When the native source reader
+changes, the watcher permits one new read-only selection attempt for the same
+failed preflight; unchanged readers do not repeatedly wake Genie. This does not
+repeat native setup or relax the timestamp, exited-runner or preservation gates.
+
+The selection is backed up and saved through the gateway's owned state, with a
+native evidence receipt. It survives restart on the same enrolled physical
+machine; an explicit change to the operator's configured source takes precedence.
+Existing qualified engines cannot be replaced by this tool. Media, inspection,
+placement and standard-target permissions all apply. A lost reply returns the
+same saved decision.
+
+The watcher then observes `retry_ready` and asks Genie for a same-operation retry
+with the exact failure timestamp. The full previous attempt is archived. Fresh
+native generation, retained output decoding, current LLM restoration and final
+enrollment remain mandatory. This correction path cannot replay a failed or
+uncertain installation that progressed beyond read-only preflight.
+
+Native queue observations use the gateway's current engine enrollments, including
+engines qualified after dashboard startup. Paired engines are queried on their
+own physical member, with one observation per member/kind; the original default
+selection does not create a duplicate probe. A changed enrollment invalidates
+old in-flight observations. Unbound or unreachable engines remain unknown.
+These read-only queue probes do not prove installation integrity or successful
+generation, and do not automatically replace an enrolled engine.
+
+An enabled standard also requests a read-only native container audit through
+actual Genie after setup activity is idle, initially and every 24 hours.
+`media_jobs.standard.audit_interval_hours` selects a positive whole number of
+hours; `audit_enabled: false` disables these audits. Media and Server inspection
+must both remain enabled. `audit_media_standard` takes no arguments: it checks
+only the standard's currently enrolled container IDs, images and native port
+bindings on each physical member. The gateway saves dated evidence with a backup;
+status reads never open SSH connections. Changed host or engine bindings invalidate
+old observations. Busy setup is deferred, and uncertain chat submission retains
+its original request identity across watcher restart.
+If Genie finishes an audit reply without fresh native evidence, the watcher
+requests one corrective read-only tool call. That request also retains its
+identity across lost acknowledgements and restarts. Two replies without a native
+receipt leave visible attention status; neither narrative claims nor repeated
+chat turns count as a successful audit. A dated unavailable result is evidence
+of an unsuccessful observation, not absence and not a reason for this retry.
+
+The results distinguish **present**, **absent**, **changed** and **unavailable**.
+Absence requires a complete native Docker inventory on the host with the enrolled
+LLM reference; an SSH or inspection failure is unavailable. A present container
+does not prove model-file integrity, generation, cache performance or readiness.
+Failures wake Genie for read-only diagnosis without erasing enrollment, changing
+placement, restarting or replacing a service. Automatic replacement of an already
+enrolled missing engine remains unsupported; this audit is detection and evidence,
+not a completed repair or upstream-improvement loop.

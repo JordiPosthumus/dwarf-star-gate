@@ -100,7 +100,7 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   }
   const initialized=await cli('scripts/setup.mjs',['--controls','--gateway-only']),configFile=path.join(checkout,'config.local.json');
   const c=JSON.parse(fs.readFileSync(configFile));assert.equal(fs.statSync(configFile).mode&0o777,0o600);assert.equal(c.nodes.length,0);assert.ok(!initialized.stdout.includes(c.api_key));
-  await assert.rejects(cli('scripts/setup.mjs',['--controls','--gateway-only']),/nothing overwritten/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);
+  assert.match((await cli('scripts/setup.mjs',['--controls','--gateway-only'])).stdout,/Existing gateway configuration preserved/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);
   const ports=new Set;while(ports.size<3)ports.add(await port());[c.port,c.continuity_door.core_port,c.ui_port]=ports;
   fs.writeFileSync(configFile,JSON.stringify(c));const checked=JSON.parse((await cli('scripts/doctor.mjs')).stdout);assert.ok(checked.ok);assert.equal(checked.workers,0);assert.ok(!fs.existsSync(path.join(checkout,'runtime')),'doctor must not create state');
   const backend=http.createServer((req,res)=>{if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:c.model,context_length:c.context_length}]}));const chunks=[];req.on('data',x=>chunks.push(x));req.on('end',()=>{received=Buffer.concat(chunks).toString();res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');});});
@@ -143,8 +143,18 @@ test('doctor exposes durable worker and recovery-route drift without leaking rou
 
 
 test('dashboard reload refuses active or queued Genie work and unreadable activity',async()=>{
- for(const conversation of [{busy:true,queued:0},{busy:false,queued:1}])await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[conversation]}:{busy:false})}),/active or queued/);
+ for(const conversation of [{busy:true,queued:0},{busy:false,queued:1}])await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[conversation]}:{busy:false})}),/active or queued/);
  await assert.rejects(assertDashboardIdle({},{fetchImpl:async()=>new Response('',{status:503})}),/unavailable/);
- await assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[{busy:false,queued:0}]}:{busy:false})});
- await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[]}:{busy:true})}),/active or queued/);
+ await assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[{busy:false,queued:0}]}:{busy:false})});
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[{busy:true}]}:url.endsWith('/chat')?{conversations:[]}:{busy:false})}),/Fleet power activity/);
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[]}:{busy:true})}),/active or queued/);
+});
+
+test('dashboard reload protects background serving checks and accepts legacy missing diagnostics route',async()=>{
+ const snapshot=url=>url.endsWith('/chat')?{conversations:[]}:url.endsWith('/power')?{members:[]}:{busy:false};
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/admission')?{busy:true}:snapshot(url))}),/serving checks/);
+ await assertDashboardIdle({},{fetchImpl:async url=>url.endsWith('/admission')?new Response('',{status:404}):Response.json(snapshot(url))});
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/spark-access')?{busy:true}:snapshot(url))}),/Initial Spark access/);
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/spark-access')?{}:snapshot(url))}),/Initial Spark access/);
+ await assertDashboardIdle({},{fetchImpl:async url=>url.endsWith('/spark-access')?new Response('',{status:404}):Response.json(snapshot(url))});
 });

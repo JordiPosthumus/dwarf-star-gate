@@ -13,3 +13,12 @@ test('identity aliases and encoded bodies are byte-preserving, including escaped
   const t=modelAliasTransform(aliases,encoding),chunks=[];t.on('data',b=>chunks.push(b));t.end(input);await new Promise(r=>t.on('end',r));assert.deepEqual(Buffer.concat(chunks),input);
  }
 });
+
+test('native effort spelling adapts only the selected top-level field across chunks',async()=>{
+ const input='{ "model":"PoolModel", "reasoning_effort":"max", "messages":[{"content":"max","reasoning_effort":"max"}], "tools":[{"reasoning_effort":"max"}] }';
+ const transform=modelAliasTransform({max:'xhigh'},undefined,'reasoning_effort'),chunks=[];
+ transform.on('data',chunk=>chunks.push(chunk));
+ for(const b of Buffer.from(input))transform.write(Buffer.from([b]));
+ transform.end();await new Promise(resolve=>transform.on('end',resolve));
+ assert.equal(Buffer.concat(chunks).toString(),input.replace('"reasoning_effort":"max"','"reasoning_effort":"xhigh"'));
+});

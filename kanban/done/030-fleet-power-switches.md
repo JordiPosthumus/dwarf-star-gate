@@ -70,3 +70,19 @@ without blocking the concrete fixes here. Media pair placement remains #005.
   served in ui.js/css. Suite 1079 pass / 0 fail at last full run.
 - Residual polish (non-blocking): active-models-first ordering is the existing
   card sort; per-card hardware labels come from the existing machine note.
+
+## Reopened verification, 2026-09-24
+
+The historical landed claim above was too broad. Exercising the actual Genie
+exposed an unusable dashboard preflight contract, a 15-second chat timeout for
+long starts, missing action IDs in receipts, and absent status in the tool schema.
+Readiness also accepted any HTTP 200 and shutdown treated network failure as stopped.
+
+The fixes share asynchronous action-ID receipts, require the expected model,
+keep hardware serialization during launcher/endpoint verification, preserve read-only
+status, and refuse dashboard restart during power work. Stop checks require drained
+healthy hardware, fresh native idle telemetry and a healthy separate machine.
+The existing production launcher settings are unchanged. Fixture coverage and native Genie-controlled start, serving, cache and
+launcher-survival validation are complete; deployment receipts remain private.
+Receipt history and action deduplication currently last for the
+dashboard process lifetime; this is not a durable operation service.

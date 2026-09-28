@@ -116,11 +116,11 @@ test('fleet pulse defaults to 12h, keeps missing energy unknown and exposes cali
   ctx.sample={fleet_speed:{schema:1,status:'ready',calibration:{decode:{max_tps:40},prefill:{max_tps:1000}},windows:{'12h':{decode:phase(20,21600,12.5),prefill:phase(680,null,4.2),energy:{status:'awaiting_power_data',estimated_kwh:null,coverage_pct:null}}}}};
   call('renderFleetSpeed(sample)');assert.equal(get('fleet-speed-window').value,'12h');assert.equal(get('fleet-decode-speed').textContent,'20');assert.equal(get('fleet-prefill-speed').textContent,'680');
   assert.equal(get('fleet-speed-decode').style.values.get('--speed-fill'),'50');assert.equal(get('fleet-speed-decode').style.values.get('--activity-fill'),'12.5');
-  assert.match(get('fleet-speed-value').textContent,/3\/3 servers · Energy unavailable/);assert.match(get('fleet-speed-summary').title,/Missing history is excluded/);
+  assert.match(get('fleet-speed-value').textContent,/3\/3 profiles sampled · Energy unavailable/);assert.match(get('fleet-speed-summary').title,/Missing history is excluded/);
   ctx.sample.fleet_speed.windows['12h'].energy={status:'insufficient_power_coverage',estimated_kwh:null,measured_kwh:0.0378,coverage_pct:1.7};call('renderFleetSpeed(sample)');
   assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Measured energy subtotal 0.038 kilowatt hours. Fleet estimate unavailable/);
   ctx.sample.fleet_speed.windows['12h'].energy={status:'estimated_from_measured_power',estimated_kwh:3.1,measured_kwh:3.1,coverage_pct:100};call('renderFleetSpeed(sample)');
-  assert.match(get('fleet-speed-value').textContent,/3\/3 servers · ≈3.1 kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
+  assert.match(get('fleet-speed-value').textContent,/3\/3 profiles sampled · ≈3.1 kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
   ctx.sample.fleet_speed.windows['12h'].prefill.mean_tps=0;ctx.sample.fleet_speed.calibration.prefill.max_tps=null;call('renderFleetSpeed(sample)');assert.equal(get('fleet-prefill-speed').textContent,'0');assert.equal(get('fleet-speed-prefill').attributes.get('class:has-speed'),false);
   ctx.sample.fleet_speed.windows['12h'].prefill.mean_tps=null;call('renderFleetSpeed(sample)');assert.equal(get('fleet-prefill-speed').textContent,'—');
   assert.match(get('fleet-speed-value').dataset.lightDetail,/cached prefill tokens are excluded/);

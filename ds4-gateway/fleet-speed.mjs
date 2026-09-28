@@ -195,7 +195,9 @@ export class FleetSpeedReader {
       if([...this.cursors.keys()].some(file=>!files.includes(file))){this.rebuild();return;}
       let backlog=false;
       for(const file of files){
-        const full=path.join(this.directory,file);if(!fs.lstatSync(full).isFile())throw new Error('Not a regular file');
+        const full=path.join(this.directory,file),named=fs.lstatSync(full,{bigint:true});if(!named.isFile())throw new Error('Not a regular file');
+        const stamp=[named.dev,named.ino,named.size,named.mtimeNs,named.ctimeNs].join(':');
+        if(this.cursors.get(file)?.stamp===stamp)continue;
         const fd=fs.openSync(full,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
         try{
           const stat=fs.fstatSync(fd);if(!stat.isFile())throw new Error('Not a regular file');
@@ -213,6 +215,7 @@ export class FleetSpeedReader {
           }
           cursor.fragment=Buffer.from(buffer.subarray(from));if(cursor.fragment.length>LINE_BYTES||cursor.skipping){if(!cursor.skipping)this.malformed++;cursor.fragment=Buffer.alloc(0);cursor.skipping=true;}
           cursor.anchor=Buffer.alloc(Math.min(64,cursor.offset));if(cursor.anchor.length)fs.readSync(fd,cursor.anchor,0,cursor.anchor.length,cursor.offset-cursor.anchor.length);
+          if(cursor.offset===stat.size)cursor.stamp=stamp;
           backlog||=cursor.offset<stat.size;if(backlog)break;
         }finally{fs.closeSync(fd);}
       }

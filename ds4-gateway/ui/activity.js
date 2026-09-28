@@ -1,7 +1,7 @@
 // Shared by the dashboard and UI; percentages describe gateway slots, not GPU load.
 export function capacity(gateway, stale=false) {
   if(!gateway || stale)return null;
-  const eligible=gateway.workers.filter(w=>w.is_healthy && !w.drained);
+  const eligible=gateway.workers.filter(w=>w.is_healthy && !w.drained && !w.quarantine);
   const slots=w=>Number.isSafeInteger(w.max_concurrent_requests)&&w.max_concurrent_requests>0?w.max_concurrent_requests:1;
   const total=eligible.reduce((sum,w)=>sum+slots(w),0),occupied=eligible.reduce((sum,w)=>sum+Math.max(0,w.load??0),0);
   return {eligible:total,occupied,free:gateway.draining?0:eligible.reduce((sum,w)=>sum+(w.queued?0:Math.max(0,slots(w)-(w.load??0))),0),

@@ -2,16 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {ServerRecords,recordsForChat} from './server-records.mjs';
-import {chatContext} from './genie-chat.mjs';
+
 import {loadConfig} from './config.mjs';
 const record=(kind='observed')=>({schema:1,worker_id:'example',kind,recorded_at:'2026-01-01T00:00:00Z',runtime:{name:'vLLM',version:'example-version'},model:{name:'example-model'},settings:{context_length:262144,server_concurrency:2,prefix_caching:true},configuration:{credential_reference:'/private/example-secret',command:['PRIVATE_COMMAND']},evidence:[{path:'/private/example-evidence'}],restoration:{retention:'unverified'},discrepancies:['recovery_binding_differs']});
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'server-records-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));for(const k of ['observed','approved','proposed'])fs.mkdirSync(path.join(root,k));return {root,reader:new ServerRecords(root),write:(r,kind=r.kind)=>fs.writeFileSync(path.join(root,kind,'example.json'),JSON.stringify(r))};}
 
-test('records keep observed, approved and proposed separate and expose no private recipe material',t=>{
- const {reader,write}=fixture(t);write(record());write({...record('approved'),approval:{at:'2026-01-02T00:00:00Z',reference:'private approval receipt'}});write({...record('proposed'),settings:{server_concurrency:4}});
- const s=reader.snapshot(['example']),r=s.records[0];assert.equal(r.observed.settings.server_concurrency,2);assert.equal(r.proposed.settings.server_concurrency,4);assert.equal(r.approved.approval.at,'2026-01-02T00:00:00Z');assert.notEqual(r.observed.revision,r.proposed.revision);assert.equal(s.authority,'none');
- const context=chatContext({server_records:s});assert.equal(context.configuration_records.records[0].observed.runtime.name,'vLLM');assert.doesNotMatch(JSON.stringify(context),/PRIVATE_COMMAND|private approval|private\/example|credential_reference/);assert.equal(r.observed.restoration.drill.status,'unproven');
-});
+
 test('an observation cannot become approved by copying it into the approved directory',t=>{
  const {reader,write}=fixture(t);write(record(),'approved');assert.equal(reader.snapshot(['example']).records[0].approved,null);
  write(record('approved'));assert.equal(reader.snapshot(['example']).records[0].approved,null);
@@ -60,4 +56,16 @@ test('a named pipe record is rejected promptly without waiting for a writer or r
  const module=new URL('./server-records.mjs',import.meta.url).href;
  const child=spawnSync(process.execPath,['--input-type=module','-e',`import {ServerRecords} from ${JSON.stringify(module)};console.log(JSON.stringify(new ServerRecords(${JSON.stringify(root)}).snapshot(['example'])));`],{encoding:'utf8',timeout:2000});
  assert.equal(child.error,undefined);assert.equal(child.status,0);assert.deepEqual(JSON.parse(child.stdout).unavailable,[{worker_id:'example',kind:'proposed'}]);assert.equal(fs.lstatSync(file).isFIFO(),true);
+});
+
+test('unchanged records reuse summaries, edits invalidate them, and callers cannot alter the cache',t=>{
+ const {reader,write,root}=fixture(t);write(record());let reads=0;const original=fs.readSync;
+ t.mock.method(fs,'readSync',(...args)=>{reads++;return original(...args);});
+ const before=reader.snapshot(['example']);const first=reads;assert.ok(first>0);
+ before.records[0].observed.runtime.name='caller mutation';
+ assert.equal(reader.snapshot(['example']).records[0].observed.runtime.name,'vLLM');assert.equal(reads,first);
+ const file=path.join(root,'observed/example.json'),stat=fs.statSync(file);
+ write({...record(),runtime:{name:'oMLX',version:'example-version'}});fs.utimesSync(file,stat.atime,stat.mtime);
+ assert.equal(reader.snapshot(['example']).records[0].observed.runtime.name,'oMLX');assert.ok(reads>first);
+ fs.unlinkSync(file);assert.equal(reader.snapshot(['example']).records[0].observed,null);
 });

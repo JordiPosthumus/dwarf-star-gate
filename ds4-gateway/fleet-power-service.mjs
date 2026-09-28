@@ -1,0 +1,246 @@
+// Dashboard fleet power service. No agent registration or private bot endpoint.
+import {powerWorkers,powerScript,machineGroup} from './power-scripts.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import {randomUUID,createHash} from 'node:crypto';
+
+export function fleetPowerEvidence({runner,workers=[],now=Date.now,catalogue=null}){
+  const byId=new Map(workers.map(w=>[w.id,w]));
+  const members=powerWorkers().map(id=>{
+    const w=byId.get(id);
+    return {worker_id:id,machine:machineGroup(id),enrolled:true,busy:runner.busy(id),
+      script_available:Object.fromEntries(['status','start','stop'].map(a=>[a,!!(runner.script??powerScript)(id,a)])),
+      ...(w?{
+        routing:{is_healthy:w.is_healthy===true,drained:w.drained===true,load:w.load??0,queued:w.queued??0,
+          direct_reserved:w.direct_reserved===true,quarantined:!!w.quarantine},
+        gateway_view:'Gateway routing view only. It does not prove the model process is running; use the status script for that.',
+      }:{
+        routing:null,
+        gateway_view:'Not a current gateway worker; only script status applies.',
+      })};
+  });
+  return {schema:1,observed_at:new Date(now()).toISOString(),members,
+    ...(catalogue?{catalogue}:{}),
+    recent:runner.receipts().slice(0,8),
+    scope:'Enrolled power scripts with physical-machine groups and the last receipts of this dashboard process. Scripts remain the source of truth; start/stop receipts include real endpoint verification, and timeout means unproven, not failed. Stopping a Spark pair stops both machines of that pair, including any other model serving there.'};
+}
+
+export function createFleetPowerService({runner,read,isTesting=()=>false,isEnabled=()=>true,directRunning=null,catalogue=null,control=null,recipes=null,receiptDirectory=null}={}){
+  if(!runner||typeof read!=='function')throw new Error('Fleet power tools need a script runner and gateway status reader.');
+  if(directRunning!==null&&typeof directRunning!=='function')throw new Error('directRunning must be a function when provided');
+  if(catalogue!==null&&typeof catalogue!=='function')throw new Error('catalogue must be a function when provided');
+  const requests=new Map(),routingReceipts=new Map();
+  const saved=new Map();
+  if(receiptDirectory){
+    fs.mkdirSync(receiptDirectory,{recursive:true,mode:0o700});
+    if(fs.lstatSync(receiptDirectory).isSymbolicLink())throw Error('Power receipt directory must not be a symlink');
+    for(const file of fs.readdirSync(receiptDirectory).filter(name=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$/.test(name))){
+      const target=path.join(receiptDirectory,file);
+      if(!fs.lstatSync(target).isFile()||fs.lstatSync(target).isSymbolicLink())throw Error('Invalid power receipt file');
+      let value=JSON.parse(fs.readFileSync(target,'utf8'));
+      if(value.action_id+'.json'!==file||!machineGroup(value.worker)||!['power','routing'].includes(value.kind))throw Error('Invalid saved power receipt');
+      // A saved accepted action has no live handle after process restart. Never
+      // infer completion or repeat it; retain it for read-only reconciliation.
+      if(value.state==='running')value={...value,state:'unknown',scope:'Dashboard restarted before a terminal receipt was saved. Inspect native state; do not replay this action.'};
+      saved.set(value.action_id,value);
+    }
+  }
+  function save(value){
+    if(receiptDirectory){
+      const file=path.join(receiptDirectory,value.action_id+'.json'),temp=file+'.'+randomUUID()+'.tmp';
+      fs.writeFileSync(temp,JSON.stringify(value)+'\n',{mode:0o600,flag:'wx'});fs.renameSync(temp,file);
+    }
+    saved.set(value.action_id,value);
+  }
+  function recentReceipts(kind,live,limit){
+    const combined=new Map([...saved.values()]
+      .filter(value=>value.kind===kind&&value.state==='complete'&&value.receipt)
+      .map(value=>[value.action_id,value.receipt]));
+    // Live evidence wins when a running action becomes terminal in this process.
+    for(const receipt of live)combined.set(receipt.action_id,receipt);
+    const time=row=>Date.parse(row.finished_at??row.started_at??'')||0;
+    return [...combined.values()].sort((a,b)=>time(b)-time(a)).slice(0,limit);
+  }
+  let admission=Promise.resolve();
+  async function snapshotWorkers(){
+    const value=await read();
+    if(value?.version!==1||!Array.isArray(value.workers))throw new Error('Gateway worker registry is unavailable.');
+    return value.workers;
+  }
+  // Synchronous-in-cost preflight: every refusal here is known before any
+  // mutation starts. Returns {allowed,refusals} and never runs scripts.
+  async function precheck(worker,power_action){
+    const workers=await snapshotWorkers();
+    const current=workers.find(w=>w.id===worker);
+    if(!current)throw new Error('Worker is not a current gateway member; use the script directly.');
+    const refusals=[];
+    if([...saved.values()].some(value=>value.state==='unknown'&&(machineGroup(value.worker)??[]).some(group=>(machineGroup(worker)??[]).includes(group))))refusals.push('A prior power action on this hardware has no terminal receipt. Reconcile native state before another mutation; do not replay it.');
+    if(recipes?.busy(worker))refusals.push('An enrolled recipe trial owns this hardware; inspect its restoration receipt before another lifecycle change.');
+    if(power_action==='stop'){
+      const groups=machineGroup(worker)??[];
+      if(current.is_healthy&&!current.drained)refusals.push('Drain the worker before stopping so new gateway work cannot be admitted.');
+      if((current.load??0)>0||current.queued>0)refusals.push('Worker is serving or holds queued gateway work. Drain it first (drain-workers), let admitted work finish, then stop.');
+      if(current.direct_reserved===true)refusals.push('The endpoint is in active direct owner use right now; stopping would interrupt it.');
+      if(typeof directRunning==='function'){
+        const running=await directRunning(worker);
+        if(!Number.isFinite(running)&&current.is_healthy)refusals.push('Native activity is unknown; obtain a fresh idle observation before stopping.');
+        if(Number.isFinite(running)&&running>0)refusals.push(`The engine reports ${running} running request(s) outside gateway accounting; treat them as active work, not idle.`);
+      }
+      const mates=workers.filter(w=>w.id!==worker&&(machineGroup(w.id)??[]).some(group=>groups.includes(group)));
+      const busyMates=mates.filter(w=>(w.load??0)>0||w.queued>0||w.direct_reserved===true||(w.is_healthy&&!w.drained));
+      if(busyMates.length)refusals.push(`Same-hardware model(s) ${busyMates.map(w=>w.id).join(', ')} still hold gateway work; stopping this model stops the shared machine(s).`);
+      for(const mate of mates.filter(w=>w.is_healthy))if(directRunning){
+        const n=await directRunning(mate.id);
+        if(!Number.isFinite(n)||n>0)refusals.push(`Same-hardware model ${mate.id} has active or unknown native work.`);
+      }
+      const healthy=workers.filter(w=>w.is_healthy&&!w.drained&&!runner.busy(w.id)&&!(machineGroup(w.id)??[]).some(group=>groups.includes(group)));
+      if(!healthy.length)refusals.push('This hardware contains the last healthy worker. Stopping it leaves no LLM; arrange a replacement first.');
+    }
+    return {allowed:refusals.length===0,refusals,worker,power_action,
+      machine:machineGroup(worker),
+      scope:power_action==='stop'?'Stopping a Spark pair stops both machines of that pair, including any other model serving there.':'Starting may conflict with a different model already serving the same machine; the script refuses that case and reports it.'};
+  }
+  async function runTool(input){
+    if(input?.action==='status'&&input.view==='index'){
+      if(Object.keys(input).some(key=>!['action','view','worker','offset','limit','revision'].includes(key)))throw Error('Index and exact receipt selectors cannot be combined');
+      const {worker,offset=0,limit=12,revision}=input;
+      if(worker!==undefined&&(typeof worker!=='string'||!/^[A-Za-z0-9][\w-]{0,63}$/.test(worker)))throw Error('Use one worker ID');
+      if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>20)throw Error('Use a valid index page of up to 20 entries');
+      if(revision!==undefined&&(typeof revision!=='string'||!/^[a-f0-9]{64}$/.test(revision)))throw Error('Use the returned index revision');
+      const rows=new Map();
+      for(const value of saved.values())rows.set(value.action_id,{kind:value.kind,action_id:value.action_id,worker:value.worker,state:value.state,receipt:value.receipt});
+      for(const receipt of runner.receipts())rows.set(receipt.action_id,{kind:'power',action_id:receipt.action_id,worker:receipt.worker,state:receipt.state,receipt});
+      for(const receipt of routingReceipts.values())rows.set(receipt.action_id,{kind:'routing',action_id:receipt.action_id,worker:receipt.worker,state:receipt.state,receipt});
+      const actions=[...rows.values()].map(({receipt,...row})=>({...row,
+        ...(receipt?Object.fromEntries(['action','ok','exit_code','at','finished_at'].filter(key=>receipt[key]!==undefined).map(key=>[key,receipt[key]])):{}),
+        ...(receipt?.verified?{verification:receipt.verified.state}:{}),lookup:{action_id:row.action_id}}));
+      const entries=[...(recipes?.index?.()??[]),...actions]
+        // Unreadable plans have unknown membership: show them explicitly rather
+        // than implying that a worker has no enrollment.
+        .filter(row=>worker===undefined||row.worker===worker||row.kind==='recipe_profile'&&row.state==='unavailable')
+        .sort((a,b)=>JSON.stringify([a.kind,a.profile,a.trial_id,a.stage,a.action_id]).localeCompare(JSON.stringify([b.kind,b.profile,b.trial_id,b.stage,b.action_id])));
+      const digest=createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+      if(revision!==undefined&&revision!==digest)throw Error('Fleet index changed during observation; restart at offset 0');
+      const workers=await snapshotWorkers();
+      return {schema:1,observed_at:new Date().toISOString(),revision:digest,
+        members:fleetPowerEvidence({runner,workers}).members.filter(row=>worker===undefined||row.worker_id===worker),
+        entries:entries.slice(offset,offset+limit),pagination:{offset,limit,total:entries.length,returned:Math.min(limit,Math.max(0,entries.length-offset)),next_offset:offset+limit<entries.length?offset+limit:null},
+        scope:'Read-only index of enrolled recipes and retained operations. Follow next_offset with this revision for remaining entries; use each lookup for the full original receipt. Verified plan means matching enrolled bytes, not permission, readiness, current configuration or successful qualification. Unavailable plans have unknown worker membership. Dated operation states do not prove current serving health.'};
+    }
+    if(input?.action==='inspect'){
+      if(Object.keys(input).sort().join(',')!=='action,worker')throw Error('Read-only service inspection accepts one enrolled worker only');
+      return runTool({action:'power',worker:input.worker,power_action:'status',action_id:randomUUID()});
+    }
+    if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action,action_id'){
+      if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.action_id??''))throw Error('Use one exact power or routing action UUID');
+      const request=requests.get(input.action_id);
+      const retained=saved.get(input.action_id);
+      const receipt=runner.receipts().find(row=>row.action_id===input.action_id)??routingReceipts.get(input.action_id)??request?.result?.receipt??retained?.receipt??null;
+      return {action_id:input.action_id,observed_at:new Date().toISOString(),receipt,
+        ...(request?.result?{result:request.result}:{}),
+        state:retained?.state==='unknown'?'unknown':receipt?.state??(request?'running':retained?.state??'unknown'),
+        scope:'This exact power or routing action only; no unrelated fleet or recipe history. Unknown means no live execution handle or terminal receipt, not failure or permission to repeat. A complete script action still requires verified ready/stopped before claiming recovery.'};
+    }
+    if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action,trial_id'){
+      if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.trial_id??'')||!recipes)throw Error('Use one exact enrolled trial UUID');
+      return {trial_id:input.trial_id,observed_at:new Date().toISOString(),recipe_trials:recipes.status(input.trial_id),scope:'Saved receipts for this trial only. No current fleet health or unrelated operation history. Empty means no saved receipt for this exact ID.'};
+    }
+    if(input?.action==='status'&&Object.keys(input).length===1){
+      const cat=catalogue?await catalogue().catch(e=>({unavailable:e.message})):null;
+      return {...fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat}),
+        recent:recentReceipts('power',runner.receipts(),8),
+        routing_recent:recentReceipts('routing',[...routingReceipts.values()].reverse(),16),
+        unresolved_actions:[...saved.values()].filter(value=>value.state==='unknown'),recipe_trials:recipes?.status()??[],
+        scope:'Enrolled power scripts with physical-machine groups and recent retained receipts, including earlier dashboard processes. Dated receipts are historical evidence, not current service health. Read an exact action_id for its full retained result; unknown actions must not be replayed. Start/stop receipts require real endpoint verification; timeout means unproven. Stopping a Spark pair stops both machines, including any other model serving there.'};
+    }
+    if(input?.action==='recipe-trial'){
+      if(Object.keys(input).sort().join(',')!=='action,profile,stage,trial_id'||!recipes)throw Error('Use an enrolled recipe trial profile and stage');
+      if(!['prepare','run','inspect'].includes(input.stage))throw Error('Trials only support prepare/run/inspect; permanent rollout uses its own enrolled action');
+      if(isTesting()||!isEnabled())throw Error('Recipe trials are suspended or fleet power is switched off');
+      return recipes.start(input);
+    }
+    if(input?.action==='recipe-rollout'){
+      if(!['action,profile,rollout_id','action,expected_finished_at,profile,rollout_id'].includes(Object.keys(input).sort().join(','))||!recipes)throw Error('Use an enrolled permanent rollout profile and rollout ID');
+      if(isTesting()||!isEnabled())throw Error('Recipe rollout is suspended or fleet power is switched off');
+      return recipes.start({profile:input.profile,stage:'rollout',trial_id:input.rollout_id,...(input.expected_finished_at!==undefined?{expected_finished_at:input.expected_finished_at}:{})});
+    }
+    if(input?.action==='routing'){
+      const {worker,routing_action,action_id,expected_operator_action}=input;
+      const keys=Object.keys(input).sort().join(',');
+      if(!['action,action_id,routing_action,worker','action,action_id,expected_operator_action,routing_action,worker'].includes(keys)||!['drain','resume'].includes(routing_action)||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(action_id??''))throw Error('Specify an exact worker, routing action and action ID.');
+      const previous=routingReceipts.get(action_id);
+      if(previous){if(previous.worker!==worker||previous.routing_action!==routing_action)throw Error('Action ID belongs to another routing action');return previous;}
+      if(saved.has(action_id)){
+        const old=saved.get(action_id);if(old.kind!=='routing'||old.worker!==worker||old.routing_action!==routing_action)throw Error('Action ID belongs to another action');
+        return {action_id,state:old.state,receipt:old.receipt??null,next_step:'Read the exact action status; do not replay saved actions.'};
+      }
+      if(requests.has(action_id))throw Error('Action ID belongs to a power action');
+      if(isTesting()||!isEnabled()||!control)throw Error('Fleet routing control is unavailable or switched off.');
+      const workers=await snapshotWorkers(),current=workers.find(w=>w.id===worker);
+      if(!current||!machineGroup(worker))throw Error('Use an enrolled current fleet worker');
+      if(routing_action==='drain'&&!workers.some(w=>w.id!==worker&&w.is_healthy&&!w.drained&&!runner.busy(w.id)&&!(machineGroup(w.id)??[]).some(g=>(machineGroup(worker)??[]).includes(g))))throw Error('Keep a healthy worker on separate hardware before draining.');
+      if(routing_action==='resume'&&(runner.busy(worker)||!Object.hasOwn(input,'expected_operator_action')||(expected_operator_action!==null&&!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(expected_operator_action))))throw Error('Wait for power completion and supply the observed operator-action ID before resuming.');
+      const receipt={worker,routing_action,action_id,state:'running',started_at:new Date().toISOString(),was_drained:current.drained===true};
+      save({kind:'routing',worker,routing_action,action_id,state:'running'});routingReceipts.set(action_id,receipt);
+      try{
+        await control(routing_action==='drain'?'/drain-workers':'/resume-workers',{workers:[worker],...(routing_action==='resume'?{expected_operator_actions:{[worker]:expected_operator_action}}:{})});
+        const after=(await snapshotWorkers()).find(w=>w.id===worker);
+        if(!after||after.drained!==(routing_action==='drain'))throw Error('Routing state was not confirmed');
+        Object.assign(receipt,{state:'complete',drained:after.drained,load:after.load,queued:after.queued,operator_action:after.last_operator_action?.id??null,scope:'Routing only; existing work continues and the model process is unchanged. Preserve preexisting pauses.'});
+      }catch(error){Object.assign(receipt,{state:'unverified',error:error.message});}
+      receipt.finished_at=new Date().toISOString();
+      save({kind:'routing',worker,routing_action,action_id,state:receipt.state,receipt});return receipt;
+    }
+    const keys=Object.keys(input??{}).sort().join(',');
+    if(input?.action!=='power'||!['action,action_id,power_action,worker','action,action_id,mode,power_action,worker'].includes(keys)||('mode' in input&&input.mode!=='check'))
+      throw new Error('Specify worker, power_action and one action ID.');
+    const {worker,power_action,action_id}=input;
+    if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(action_id??''))throw new Error('Provide one action ID for this power request.');
+    if(!['start','stop','status'].includes(power_action))throw new Error('power_action must be start, stop or status.');
+    if(!(runner.script??powerScript)(worker,power_action))throw new Error(`No enrolled script for ${worker} ${power_action}; scripts remain the source of truth.`);
+    if(routingReceipts.has(action_id))throw Error('Action ID belongs to a routing action');
+    const prior=requests.get(action_id);
+    if(prior){
+      if(prior.worker!==worker||prior.power_action!==power_action)throw new Error('Action ID already belongs to a different request.');
+      return prior.result??{accepted:true,action_id,worker,power_action,state:'running',next_step:'Read fleet_power_status for this action ID. Do not repeat the mutation.'};
+    }
+    if(saved.has(action_id)){
+      const old=saved.get(action_id);if(old.kind!=='power'||old.worker!==worker||old.power_action!==power_action)throw Error('Action ID belongs to another action');
+      return {action_id,state:old.state,receipt:old.receipt??null,next_step:'Read the exact action status; this saved action was not reissued.'};
+    }
+    if(power_action!=='status'){
+      if(isTesting())throw new Error('Fleet power is suspended for testing.');
+      if(!isEnabled())throw new Error('Fleet power is switched off.');
+    }
+    if(power_action==='status'){
+      if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:machineGroup(worker),scope:'Read-only status script.'};
+      const receipt=await runner.run(worker,'status',{actionId:action_id});
+      return {receipt,action_id,next_step:'Script output is in the receipt; it describes serving engine and containers, not gateway routing.'};
+    }
+    const pre=await precheck(worker,power_action);
+    if(!pre.allowed)throw new Error(pre.refusals.join(' '));
+    if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:pre.machine,scope:pre.scope,
+      note:'Preflight only. The mutation runs through the same runner as Genie and reports real endpoint verification.'};
+    if(requests.has(action_id))return runTool(input);
+    save({kind:'power',worker,power_action,action_id,state:'running'});
+    const request={worker,power_action};requests.set(action_id,request);
+    void runner.run(worker,power_action,{actionId:action_id}).then(receipt=>{request.result={receipt,action_id,
+      next_step:power_action==='stop'
+        ?receipt.verified?.state==='stopped'
+          ?'Verified stopped: the endpoint no longer accepts connections. Gateway routing will mark it unavailable on its next probes.'
+          :'Stop receipt recorded but shutdown is NOT verified. Read fleet_power_status or the card Status; do not claim the model is down.'
+        :receipt.verified?.state==='ready'
+          ?'Verified ready: the endpoint answers model-list requests. Routing needs the gateway probes to mark it healthy.'
+          :'Start receipt recorded but readiness is NOT verified (possibly still loading). Poll Status; do not route expectations yet.'};
+      save({kind:'power',worker,power_action,action_id,state:receipt.state,receipt});
+    }).catch(error=>{request.result={action_id,worker,power_action,error:error.message,state:'unverified'};});
+    return {accepted:true,action_id,worker,power_action,state:'running',next_step:'Read fleet_power_status for this action ID. Accepted means the operation is running, not verified complete.'};
+  }
+  const tool=input=>{
+    if(input?.action==='recipe-trial'||input?.action==='recipe-rollout'||input?.action==='routing'||(input?.action==='power'&&input.power_action!=='status'&&input.mode!=='check')){
+      const next=admission.then(()=>runTool(input));admission=next.then(()=>undefined,()=>undefined);return next;
+    }
+    return runTool(input);
+  };
+  return {precheck:(worker,power_action)=>precheck(worker,power_action),tool};
+}

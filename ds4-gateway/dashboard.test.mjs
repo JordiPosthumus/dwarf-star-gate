@@ -8,11 +8,12 @@ import { once } from 'node:events';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalProcessEpoch } from './telemetry.mjs';
-import { createDashboard, runDashboard, genieRuntimeConfig, genieChatConfig } from './dashboard.mjs';
+import {createDashboard,runDashboard} from './dashboard.mjs';
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
-import {GenieProviderLedger} from './genie-provider-ledger.mjs';
-import {createFleetPowerTools} from './genie-power.mjs';
+
+import {createFleetPowerService} from './fleet-power-service.mjs';
+import {phase} from './ui/activity.js';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
@@ -219,6 +220,25 @@ test('activity view uses three honest operational colors and folds thinking into
   assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#42484c\}/);
 });
 
+test('activity bar retains measured history when endpoint metrics disconnect or are absent',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
+  const context=vm.createContext({phase});vm.runInContext(source,context);
+  const now=1_000_000;
+  for(const endpoint of [undefined,{source:'omlx',connected:false,at:now-30_000}]){
+    const d={id:'m3',series:[],cache:{},endpoint_metrics:endpoint,activity:[
+      {start:now-60_000,end:now-30_000,phase:'decode'},
+      {start:now-30_000,end:now,phase:'working'}
+    ]};
+    const html=vm.runInContext(`device(${JSON.stringify(d)},{id:'m3',load:1,is_healthy:false},${now},false)`,context);
+    assert.match(html,/class="device-bar"/);
+    const bar=html.slice(html.indexOf('<div class="device-bar"'),html.indexOf('<span class="bar-note'));
+    assert.match(bar,/phase-decode/,'retain the observed generation interval');
+    assert.match(bar,/phase-working/,'gateway work is busy even when its native phase is unknown');
+    assert.doesNotMatch(bar,/phase-idle-off|phase-prefill/,'do not invent idle or prompt processing');
+    assert.doesNotMatch(html,/class="device-minicharts"/,'disconnected live-speed charts remain hidden');
+  }
+});
+
 test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
@@ -316,7 +336,8 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.match(markup({...q,holds:[{owner_id:'<script>evil</script>'}]}),/&lt;script&gt;/);
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
   const fleet=html.split('id="view-fleet"')[1].split('id="view-genie"')[0];
-  assert.match(fleet,/id="routing-summary"[\s\S]*id="routing-message"[\s\S]*id="devices"/);
+  assert.doesNotMatch(fleet,/id="routing-summary"/);
+  assert.match(fleet,/id="routing-message"[\s\S]*id="devices"/);
   assert.match(source,/\$\('devices'\)\.addEventListener\('click',handleWorkerClick\)/);
   assert.match(source,/Verify and readmit.*small test response/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
@@ -487,7 +508,7 @@ test('hardware cards stay compact, label unified memory honestly and preserve mi
 
 });
 async function fixture(t, management = null) {
-  const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }), undefined, management);
+  const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }), {management});
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
   return { server, url:`http://127.0.0.1:${server.address().port}` };
@@ -516,163 +537,15 @@ function genieReportFixture() {
   const report=id=>({id,time:1000,source:'primary',text:`Report ${id}`});
   return {container,document,render,report};
 }
-test('Genie polling preserves report nodes, open state, focus and untouched text',()=>{
-  const {container,document,render,report}=genieReportFixture(), reports=['c','b','a'].map(report);
-  render(reports);const nodes=[...container.children], summary=nodes[1].children[0], answer=nodes[1].children[1];
-  nodes[1].open=true;document.activeElement=summary;
-  for(let i=0;i<5;i++)render(structuredClone(reports));
-  assert.deepEqual(container.children,nodes);assert.equal(nodes[1].open,true);assert.equal(nodes[0].open,false);
-  assert.equal(document.activeElement,summary);assert.equal(nodes[1].children[1],answer);assert.equal(answer.writes,1);
-  nodes[1].open=false;render(reports);assert.equal(nodes[1].open,false);
-});
-test('Genie progress formats future provider deadlines as remaining time',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
-  assert.match(source,/deadline in \$\{remaining\(s\.provider_deadline_at,now\)\}/);
-  assert.doesNotMatch(source,/deadline in \$\{age\(s\.provider_deadline_at,now\)\}/);
-});
-test('new Genie reports retain an open older report beyond the latest three and history rotation',()=>{
-  const {container,document,render,report}=genieReportFixture();
-  render(['c','b','a'].map(report));const oldest=container.children[2];oldest.open=true;
-  render(['d','c','b','a'].map(report));
-  assert.deepEqual(container.children.map(n=>n.dataset.reportId),['d','c','b','a']);assert.equal(container.children[3],oldest);assert.ok(oldest.open);
-  render(['e','d','c'].map(report));assert.equal(container.children[3],oldest);assert.ok(oldest.open);
-  oldest.open=false;document.activeElement=oldest.children[0];render(['e','d','c'].map(report));assert.equal(container.children[3],oldest);
-  document.activeElement=null;render(['e','d','c'].map(report));assert.equal(container.children.length,3);assert.equal(oldest.parent,null);
-});
-test('Genie report bodies remain inert text and an empty refresh does not close a report being read',()=>{
-  const {container,render,report}=genieReportFixture(), text='<img src=x onerror=alert(1)> & <script>bad()</script>';
-  render([{...report('a'),source:'<b>primary</b>',text}]);const node=container.children[0];node.open=true;
-  assert.equal(node.tagName,'details');assert.equal(node.children[0].tagName,'summary');
-  assert.equal(node.children[1].textContent,text);assert.equal(node.children[1].children.length,0);
-  render([]);assert.equal(container.children[0],node);assert.ok(node.open);
-  node.open=false;render([]);assert.equal(container.children.length,0);
-});
-test('Genie action ledger is concise, newest-first and includes proven pool commandeering',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
-  const context=vm.createContext({});vm.runInContext(source,context);
-  const snapshot={gateway:{
-    recovery:{operations:[
-      {id:'operator',actor:'operator',worker_id:'private-worker',service_action:'restart',state:'recovered',updated_at:6000},
-      {id:'recover',actor:'genie',worker_id:'spark1',service_action:'adopt_restart',state:'recovered',updated_at:4000,profile_adopted:true,proof:{samples:[]}}
-    ]},
-    predictor:{actions:[{id:'predict',actor:'genie',action:'train',status:'verified',reason:'Fresh evidence passed',time:2000}]}
-  }};
-  const genie={reports:[{id:'report',time:5000,served_by:'pool_fallback',served_on:'spark2'},{id:'ordinary',time:7000,served_by:'dedicated'}]};
-  const analytics={handovers:{rows:[{actor:'genie',at:3000,source:'spark1',destination:'m3-studio',waiting_before_move_ms:91000,service_state:'complete',cached_fraction:.75},{actor:'operator',at:8000,source:'private-worker',destination:'spark2',waiting_before_move_ms:1,service_state:'complete'}]}};
-  context.snapshot=snapshot;context.genie=genie;context.analytics=analytics;
-  const rows=JSON.parse(vm.runInContext('JSON.stringify(genieActionRows(snapshot,genie,analytics))',context));
-  assert.deepEqual(rows.map(row=>row.kind),['provider','recovery','routing']);
-  assert.match(rows[0].title,/Pool commandeered · spark2/);assert.match(rows[1].detail,/verified profile hand-back/);assert.match(rows[2].detail,/75% prompt reused/);
-  assert.equal(rows.find(row=>row.level==='attention'),undefined);assert.ok(!JSON.stringify(rows).includes('private-worker'));
-  context.genie={provider_actions:[{id:'assigned',time:9000,served_by:'pool_assigned',served_on:'spark2'},...genie.reports]};
-  const assignedRows=JSON.parse(vm.runInContext('JSON.stringify(genieActionRows(snapshot,genie,analytics))',context));
-  assert.match(assignedRows[0].detail,/Pool selected before dispatch/);assert.match(assignedRows[1].detail,/Dedicated provider unavailable/);
-  assert.doesNotMatch(assignedRows[1].detail,/refus|before dispatch/,'historical fallback rows must not gain new proof retroactively');
-  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  assert.match(html,/id="genie-action-ledger"/);assert.match(html,/Pool commandeering/);assert.match(html,/Newest first|title="Proven executor receipts/);
-  assert.match(css,/\.genie-action-items li\{display:grid/);assert.match(source,/textContent=row\.detail/);assert.doesNotMatch(source,/innerHTML=.*genieActionRows/);
-});
-test('Genie ledger renders all 30 available receipts, filters and preserves scroll on refresh',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
-  const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;this.scrollTop=0;}});
-  const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
-  const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make}});vm.runInContext(source,context);
-  context.receipts=Array.from({length:35},(_,i)=>({id:String(i),time:1000+i,served_by:'pool_fallback',served_on:'worker-a'}));
-  vm.runInContext('wireSnapshot={};requestHistoryState={};genieState={provider_actions:receipts};renderGenieActionLedger()',context);
-  const list=nodes['genie-action-items'];assert.equal(list.children.length,30);
-  assert.equal(list.children[0].children[0].dateTime,new Date(1034).toISOString());
-  assert.equal(list.children.at(-1).children[0].dateTime,new Date(1005).toISOString());
-  assert.match(nodes['genie-action-summary'].textContent,/30 shown.*newest first/);
-  list.scrollTop=180;const children=list.children;vm.runInContext('renderGenieActionLedger()',context);
-  assert.equal(list.children,children);assert.equal(list.scrollTop,180);
-  vm.runInContext("genieState.provider_action_storage={error:'PRIVATE_ERROR'};renderGenieActionLedger()",context);
-  assert.match(nodes['genie-action-summary'].textContent,/pool history not saved/);assert.doesNotMatch(nodes['genie-action-summary'].title,/PRIVATE/);
-  assert.equal(list.children,children);assert.equal(list.scrollTop,180);
-  vm.runInContext("genieState.provider_actions.unshift({id:'new',time:2000,served_by:'pool_fallback'});renderGenieActionLedger()",context);
-  assert.equal(list.children.length,30);assert.equal(list.scrollTop,180);
-  nodes['genie-action-filter'].value='attention';vm.runInContext('renderGenieActionLedger()',context);
-  assert.equal(list.children.length,1);assert.equal(list.children[0].textContent,'No actions match this filter.');
-  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8'),html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
-  assert.match(css,/\.genie-action-items\{[^}]*max-height:320px;overflow-y:auto/);
-  assert.match(html,/id="genie-action-items"[^>]*tabindex="0"[^>]*aria-label="Latest 30/);
-});
-test('Genie ledger preserves legacy receipts with unrepresentable dates alongside valid actions',t=>{
-  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-ledger-dates-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
-  const ledger=new GenieProviderLedger(path.join(root,'actions'));
-  assert.equal(ledger.append({id:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',time:Number.MAX_SAFE_INTEGER,served_by:'pool_fallback',served_on:'worker-a'}),true);
-  const bytes=fs.readFileSync(ledger.file),loaded=new GenieProviderLedger(ledger.directory);
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
-  const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;this.scrollTop=0;}});
-  const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
-  const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make},receipts:loaded.recent()});vm.runInContext(source,context);
-  vm.runInContext(`wireSnapshot={gateway:{recovery:{operations:[{id:'recovery',actor:'genie',updated_at:Number.MAX_SAFE_INTEGER,state:'failed'}]},predictor:{actions:[{id:'predictor',actor:'genie',time:Number.MAX_SAFE_INTEGER,status:'failed'}]}}};
-    requestHistoryState={handovers:{rows:[{actor:'genie',at:Number.MAX_SAFE_INTEGER,source:'worker-a',destination:'worker-b'}]}};
-    genieState={provider_actions:[...receipts,...[0,1000,8640000000000000].map((time,i)=>({id:'valid-'+i,time,served_by:'pool_fallback'}))]};renderGenieActionLedger()`,context);
-  const list=nodes['genie-action-items'],times=list.children.map(item=>item.children[0]);
-  assert.equal(times.length,6);assert.equal(times.filter(time=>time.textContent==='unknown').length,3);
-  assert.ok(times.filter(time=>time.textContent==='unknown').every(time=>time.dateTime===undefined));
-  assert.deepEqual(times.filter(time=>time.dateTime!==undefined).map(time=>time.dateTime),[8640000000000000,1000,0].map(at=>new Date(at).toISOString()));
-  assert.match(nodes['genie-action-summary'].textContent,/6 shown/);
-  list.scrollTop=80;const children=list.children;vm.runInContext('renderGenieActionLedger()',context);
-  assert.equal(list.children,children);assert.equal(list.scrollTop,80);
-  assert.equal(loaded.recent()[0].time,Number.MAX_SAFE_INTEGER);assert.deepEqual(fs.readFileSync(ledger.file),bytes);
-});
-test('Genie ledger retries unchanged evidence after a failed render',()=>{
-  for(const failure of ['create','replace']){
-    let fail=false;
-    const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){if(fail&&failure==='replace')throw new Error('fixture render failure');this.children=items;this.scrollTop=0;}});
-    const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
-    const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
-    const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:()=>{if(fail&&failure==='create')throw new Error('fixture render failure');return make();}}});vm.runInContext(source,context);
-    vm.runInContext("wireSnapshot={};requestHistoryState={};genieState={provider_actions:[{id:'old',time:0,served_by:'pool_fallback'}]};renderGenieActionLedger()",context);
-    const list=nodes['genie-action-items'],old=list.children;list.scrollTop=80;fail=true;
-    assert.throws(()=>vm.runInContext("genieState.provider_actions.push({id:'new',time:1000,served_by:'pool_fallback'});renderGenieActionLedger()",context),/fixture render failure/);
-    assert.equal(list.children,old);assert.equal(list.scrollTop,80);fail=false;
-    vm.runInContext('renderGenieActionLedger()',context);
-    assert.equal(list.children.length,2);assert.equal(list.children[0].children[0].dateTime,new Date(1000).toISOString());assert.equal(list.scrollTop,80);
-    const recovered=list.children;vm.runInContext('renderGenieActionLedger()',context);assert.equal(list.children,recovered);
-  }
-});
-test('health wire shows Genie-authored findings and recommendations, withholding stale or unavailable advice',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
-  const context=vm.createContext({});vm.runInContext(source,context);
-  const news=(s,t)=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)},${JSON.stringify(t)})`,context);
-  const time=Date.parse('2026-09-02T20:00:00Z');
-  const s={time,gateway:{active:1,queued:9,workers:[]}},ticker={state:'ready',evidence_at:time-60000,entries:[
-    {severity:'warning',text:'Server B is quarantined after an accelerator failure.',recommendation:'Inspect its backend logs before verified recovery.'},
-    {severity:'info',text:'Nine requests were queued at the evidence time.',recommendation:null}]};
-  const result=news(s,ticker);assert.equal(result.level,'warn');
-  assert.equal(result.items[0].text,'Server B is quarantined after an accelerator failure. Recommendation: Inspect its backend logs before verified recovery.');
-  assert.equal(result.items[0].severity,'warning');
-  assert.equal(result.items[1].text,ticker.entries[1].text);assert.equal(result.evidence_at,time-60000);
-  assert.match(result.label,/Genie assessment · evidence/);
-  assert.equal(news(s,{...ticker,entries:[ticker.entries[1]]}).level,'info');
-  assert.match(news(s,{...ticker,refreshing:true}).label,/updating/);
-  assert.match(news(s,{...ticker,review_error:true}).label,/latest refresh failed/);
-  for(const unavailable of [{...s,gateway_error:true},{time}]) {
-    assert.equal(news(unavailable,ticker).level,'unknown');assert.doesNotMatch(news(unavailable,ticker).items.map(i=>i.text).join(' '),/Server B|Nine requests/);
-  }
-  for(const state of ['off','reviewing','pending','stale','changed','invalid','error','unavailable']) {
-    const value=news(s,{...ticker,state});assert.equal(value.level,'unknown');assert.equal(value.items.length,1);
-    assert.equal(value.items[0].severity,'info');assert.doesNotMatch(value.items[0].text,/Server B|Nine requests|Recommendation:/);
-  }
-  for(const state of ['pending','stale','changed','invalid','error']) {
-    const updating=news(s,{state,refreshing:true}).items[0].text;
-    assert.match(updating,/preparing a fresh assessment/);
-    assert.doesNotMatch(updating,/Request a fresh review|failed|rejected/);
-  }
-  assert.match(news(s,{state:'off',refreshing:true}).items[0].text,/Enable him/);
-  assert.match(news(s,{state:'unavailable',refreshing:true}).items[0].text,/unavailable/);
-  assert.match(news(s,{state:'off'}).items[0].text,/Enable him/);
-  assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
-  assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
-  const failed=news(s,{state:'error',provider_attempts:[{provider:'pool_fallback',outcome:'failed',reason:'transport_error'},{provider:'dedicated',outcome:'failed',reason:'transport_error'}]});
-  assert.match(failed.items[0].text,/both the dedicated provider and Star Gate pool fallback were tried/);assert.match(failed.items[0].text,/gateway is unaffected/);
-  const rejected=news({...s,gateway:{...s.gateway,healthy:3,total:3,active:2,queued:4}},{state:'error',model_http_status:400});
-  assert.match(rejected.items[0].text,/Fleet: 3\/3 servers healthy; 2 running; 4 waiting/);assert.match(rejected.items[0].text,/HTTP 400/);
-  assert.doesNotMatch(rejected.items[0].text,/no replacement advice/);assert.equal(rejected.level,'unknown');
 
-});
+
+
+
+
+
+
+
+
 test('health wire cannot hide live quarantine or wasted-capacity evidence behind a stalled Genie',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
@@ -694,8 +567,8 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
   }
   assert.doesNotMatch(JSON.stringify(stalled),/PRIVATE-REQUEST-ID|m3-studio/,'private evidence and intentional holds stay out of the alert');
   const ready=news({gateway},{state:'ready',evidence_at:1000,entries:[{severity:'info',text:'A separate Genie observation.',recommendation:'Keep watching.'}]});
-  assert.equal(ready.level,'critical');assert.match(ready.label,/Star Gate safety alert \+ Genie assessment/);assert.equal(ready.items.length,2);
-  assert.match(ready.items[1].text,/A separate Genie observation.*Recommendation: Keep watching/);
+  assert.equal(ready.level,'critical');assert.match(ready.label,/Star Gate safety alert · observed gateway evidence/);assert.equal(ready.items.length,1);
+  assert.doesNotMatch(JSON.stringify(ready),/A separate Genie observation/);
 });
 test('long occupied slots explain queue pressure without treating stale engine totals as progress',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
@@ -730,55 +603,10 @@ test('enabled unavailable capacity is deterministic, while deliberate pauses and
   const unavailable=news({available:1,total:2,workers:[{id:'worker-a',is_healthy:false,drained:false,recovery_waiting:0,quarantine:null}]});
   assert.equal(unavailable.level,'warn');assert.match(unavailable.items[0].text,/enabled but unavailable/);
   for(const worker of [{id:'worker-a',is_healthy:false,drained:true,operator_paused:true},{id:'worker-a',is_healthy:false,drained:false,holds:[{id:'hold'}]}]) {
-    const deliberate=news({available:1,total:2,workers:[worker]});assert.equal(deliberate.level,'unknown');assert.match(deliberate.items[0].text,/Gate Genie is off/);
+    const deliberate=news({available:1,total:2,workers:[worker]});assert.equal(deliberate.level,'unknown');assert.match(deliberate.items[0].text,/Legacy Genie removed/);
   }
   const overdue=news({available:1,total:2,workers:[{id:'worker-a',is_healthy:true,drained:true,maintenance_locks:[{name:'speed-test',review_at:1}]}]});
   assert.equal(overdue.level,'warn');assert.match(overdue.items[0].text,/overdue maintenance lock speed-test/);assert.match(overdue.items[0].text,/separate checked Resume/);
-});
-test('health wire is a compact keyboard-pausable ticker with no redundant controls or explainer',()=>{
-  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  assert.doesNotMatch(html,/health-wire-pause|Gate Genie <span>health wire|Genie-written observations and recommendations/);assert.match(html,/class="health-wire-window" tabindex="0"/);
-  assert.match(html,/id="health-wire-copy"[^>]*aria-hidden="true"/);assert.match(html,/aria-label="Gate Genie fleet health headlines"/);
-  assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation-play-state:paused/);assert.match(css,/aria-hidden="true"\]\{display:none\}/);
-  assert.match(css,/gap:6rem;padding-right:6rem/);
-  const js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
-  assert.match(js,/getBoundingClientRect\(\)\.width\/52/);assert.match(js,/text\.textContent=entry\.text/);
-});
-test('each headline keeps its own severity, inert text and label in both copies without disturbing reading',()=>{
-  class Element {
-    constructor(){this.children=[];this.dataset={};this.style={};this.hovered=false;}
-    set innerHTML(_){throw new Error('No headline HTML parsing');}
-    set textContent(v){this.text=String(v);}
-    get textContent(){return (this.text||'')+this.children.map(c=>c.textContent).join('');}
-    append(...children){this.children.push(...children);}
-    replaceChildren(...children){this.children=children;}
-    matches(){return this.hovered;}
-    getBoundingClientRect(){return {width:1680};}
-  }
-  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
-  const document={getElementById:get,createElement:()=>new Element()};
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
-  const ctx=vm.createContext({document,snap:{gateway:{}},tick:{state:'ready',evidence_at:1000,entries:['good','info','warning','critical'].map(severity=>({severity,text:`${severity} <img onerror=bad()>`,recommendation:null}))}});
-  vm.runInContext(source,ctx);const render=()=>vm.runInContext('wireState=tick;renderHealthWire(snap)',ctx);render();
-  for(const id of ['health-wire-text','health-wire-copy']){
-    const children=get(id).children;assert.deepEqual(children.map(c=>c.dataset.severity),['good','info','warning','critical']);
-    assert.deepEqual(children.map(c=>c.children[0].textContent),['Good: ','Info: ','Warning: ','Critical: ']);
-    assert.equal(children[3].children[1].textContent,'critical <img onerror=bad()>');
-  }
-  const first=get('health-wire-text').children[0];render();assert.equal(get('health-wire-text').children[0],first);
-  get('health-wire').hovered=true;ctx.tick.entries=[{severity:'invented css-class',text:'New report'}];render();assert.equal(get('health-wire-text').children[0],first);
-  get('health-wire').hovered=false;render();assert.equal(get('health-wire-text').children[0].dataset.severity,'info');
-  assert.ok(Math.abs(parseFloat(get('health-wire-track').style.animationDuration)-1680/52)<.001);
-});
-test('headline shades retain readable contrast and are not overridden by aggregate wire severity',()=>{
-  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  const lum=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4).reduce((n,c,i)=>n+c*[.2126,.7152,.0722][i],0);
-  const bg=lum('#1a1c1d'),colors=[];
-  for(const severity of ['good','info','warning','critical']){
-    const match=css.match(new RegExp(`\\.health-wire-item\\[data-severity="${severity}"\\]\\{color:(#[a-f0-9]{6})\\}`));
-    assert.ok(match,severity);assert.ok((lum(match[1])+.05)/(bg+.05)>=4.5,severity);colors.push(match[1]);
-  }
-  assert.equal(new Set(colors).size,4);assert.doesNotMatch(css,/\.health-wire\[data-level=.*?color:/);
 });
 test('dashboard serves local assets and a downloadable read-only snapshot', async t => {
   const { url } = await fixture(t);
@@ -792,39 +620,25 @@ test('dashboard names model servers and explains gateway-only concurrency and av
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
   const js = await (await fetch(url+'/ui.js')).text();
-  assert.match(html,/AVAILABLE MODEL SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN STAR GATE/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
-  assert.match(html,/Manage servers/);assert.match(html,/not necessarily one physical machine/);
+  assert.match(html,/ROUTING SERVER GROUPS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN STAR GATE/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
+  assert.match(html,/Manage servers/);assert.match(html,/not necessarily a separate physical machine/);
   assert.match(html,/Direct clients are outside this limit/);
   assert.match(html,/Available means healthy and enabled, including busy servers/);
   assert.match(html,/Warm cache slots retain sessions/);
   assert.match(js,/one active gateway request per model server/);
   assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
 });
-test('fleet overview is a dense status band and controls live in one settings tab',()=>{
-  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  assert.doesNotMatch(html+js+css,/fleet-summary|Core backlog:/);
-  assert.match(js,/\$\('capacity-note'\)\.title=.*schedulingExplanation/);
-  assert.match(html,/<section class="status-deck"/);assert.match(html,/id="health-wire"[\s\S]*class="workspace-tabs"[\s\S]*class="status-deck"[\s\S]*class="capacity-panel"[\s\S]*class="overview"/);
-  assert.doesNotMatch(html,/Gateway request slots, not GPU utilization\. Warm cache slots are separate\./);
-  assert.doesNotMatch(html,/id="server-settings"|\[ server controls \]/);assert.match(js,/openServerSettings/);
-  assert.match(html,/id="tab-settings"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"/);
-  assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"/);
-  assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="performance-lights"/);
-  assert.match(css,/\.metric-block\{display:grid;[^}]*grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
-  assert.doesNotMatch(html.split('<nav class="workspace-tabs"')[0],/id="genie-hardening"/);assert.match(html,/Private developer hypotheses distilled from bounded Star Gate failure evidence/);
-  assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
-});
+
 test('dashboard uses accessible persistent views instead of one overwhelming vertical page',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(html,/class="workspace-tabs" role="tablist"/);
-  for(const [name,label] of [['fleet','Fleet'],['genie','Gate Genie'],['analytics','Evidence'],['activity','Activity']]){
+  for(const [name,label] of [['fleet','Fleet'],['analytics','Evidence'],['activity','Activity']]){
     assert.match(html,new RegExp(`id="tab-${name}"[^>]*role="tab"[^>]*aria-controls="view-${name}"[^>]*data-workspace-tab="${name}"[^>]*>${label}<`));
     assert.match(html,new RegExp(`id="view-${name}"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-${name}"[^>]*data-workspace-view="${name}"`));
   }
   assert.match(html,/id="tab-settings"[^>]*role="tab"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"[^>]*>[\s\S]*<span>Settings<\/span>/);
   assert.match(html,/id="view-settings"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-settings"[^>]*data-workspace-view="settings"/);
-  assert.match(html,/id="view-fleet"[^>]*>[\s\S]*id="devices"[\s\S]*<\/section>\s*<section id="view-genie"/);
-  assert.match(html,/id="view-genie"[^>]*hidden>[\s\S]*id="genie-reports"[\s\S]*id="genie-hardening"[\s\S]*id="recovery-actions"[\s\S]*id="genie-memory"/);
+  assert.match(html,/id="view-fleet"[^>]*>[\s\S]*id="devices"[\s\S]*<\/section>\s*<section id="view-analytics"/);
   assert.match(html,/id="view-analytics"[^>]*hidden>[\s\S]*id="dataset-status"[\s\S]*class="cache-cost-panel"/);
   assert.match(html,/id="view-activity"[^>]*hidden>[\s\S]*id="continuity-rejections"[\s\S]*id="requests"/);
   assert.match(html,/id="view-settings"[^>]*hidden>[\s\S]*id="worker-management"[\s\S]*id="worker-form"/);
@@ -852,7 +666,7 @@ test('an active dashboard serves a frozen complete bundle and rejects missing as
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'dwarf-gate-assets-'));
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   fs.cpSync(new URL('./ui/',import.meta.url),dir,{recursive:true});
-  const server = createDashboard(()=>({read_only:true}),dir);
+  const server = createDashboard(()=>({read_only:true}), {assetsDirectory:dir});
   server.listen(0,'127.0.0.1'); await once(server,'listening');
   t.after(()=>{server.closeAllConnections();server.close();});
   const url = `http://127.0.0.1:${server.address().port}`;
@@ -860,7 +674,7 @@ test('an active dashboard serves a frozen complete bundle and rejects missing as
   fs.writeFileSync(path.join(dir,'brand.css'),'temporary incomplete edit');
   assert.equal(await(await fetch(url+'/brand.css')).text(),original);
   fs.writeFileSync(path.join(dir,'index.html'),'<img src="/not-served.png">');
-  assert.throws(()=>createDashboard(()=>({}),dir),/Unserved dashboard asset/);
+  assert.throws(()=>createDashboard(()=>({}), {assetsDirectory:dir}),/Unserved dashboard asset/);
 });
 test('logo-derived icons include a transparent monochrome Safari mask and correctly sized PNG/ICO assets',async t=>{
   const {url}=await fixture(t),html=await(await fetch(url)).text();
@@ -1032,7 +846,7 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   const calls = [];
   const backend = http.createServer((req,res) => {
     calls.push(req.url); assert.equal(req.headers.authorization, 'Bearer SECRET_FOR_TEST');
-    res.end(JSON.stringify({ version:1, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
+    res.end(JSON.stringify({ version:1, genie_thinking:{chat:'max',reviewer:'high',saved:{chat:'max',private:'NEVER_EXPORT'},levels:['NEVER_EXPORT'],private:'NEVER_EXPORT'}, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
       workers:Array.from({ length:6 }, (_,i) => ({ id:`spark${i+1}`, is_healthy:true, load:0, url:'http://private-address', probe_error:'secret',
         requested_thinking:{status:'specified',fields:{reasoning_effort:i===0?'xhigh':'none',prompt:'NEVER_EXPORT'}},
         last_requested_thinking:{status:'not_specified'},last_request_finished_at:'NEVER_EXPORT' })) }));
@@ -1044,6 +858,8 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   fs.writeFileSync(path.join(dir,'gateway.log'), JSON.stringify({ event:'request_finished', node:'spark1', outcome:'complete', prompt:'NEVER_EXPORT' })+'\n');
   const app = await runDashboard(config, 0); t.after(app.close);
   const s = app.snapshot(); assert.equal(s.devices.length, 6); assert.equal(s.events.length, 1);
+  assert.deepEqual(s.gateway.genie_thinking,{chat:'max',reviewer:'high',saved:{chat:'max'},levels:['none','minimal','low','medium','high','xhigh','max']});
+  const caps=await fetch('http://127.0.0.1:'+app.server.address().port+'/api/genie/capabilities');assert.equal(caps.status,410);
   assert.deepEqual(s.gateway.workers[0].requested_thinking,{status:'specified',fields:{reasoning_effort:'xhigh'}});
   assert.equal(s.gateway.workers[1].requested_thinking.fields.reasoning_effort,'none');
   assert.equal(s.gateway.workers[0].last_request_finished_at,null);
@@ -1067,7 +883,7 @@ test('dashboard refuses a symlinked gateway event log and recovers when a regula
 });
 
 test('Current Jobs API is read-only, same-origin and separate from diagnostics',async t=>{
-  const server=createDashboard(()=>({version:1,devices:[]}),undefined,null,null,null,{read:async()=>({schema:1,jobs:[{request_id:'fixture',request_preview:{text:'Private request preview'}}]})});
+  const server=createDashboard(()=>({version:1,devices:[]}), {currentJobs:{read:async()=>({schema:1,jobs:[{request_id:'fixture',request_preview:{text:'Private request preview'}}]})}});
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
   const origin=`http://127.0.0.1:${server.address().port}`;
   const response=await fetch(origin+'/api/current-jobs');assert.equal(response.status,200);assert.match(await response.text(),/Private request preview/);
@@ -1117,19 +933,13 @@ test('vLLM timeline omits obsolete completion ticks and unavailable phase has no
  const page=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');assert.match(page,/<summary>Details<\/summary>/);assert.match(page,/Applies immediately; no restart needed/);
 });
 
-test('chat inherits the inline credential only for the exact configured local gateway',async()=>{
-  const {genieChatConfig}=await import('./dashboard.mjs');
-  const config={port:30000,api_key:'example-gateway-key',genie_chat:{url:'http://127.0.0.1:30000/v1',model:'example'}};
-  assert.equal(genieChatConfig(config).api_key,'example-gateway-key');assert.equal(config.genie_chat.api_key,undefined);
-  assert.equal(genieChatConfig({...config,genie_chat:{url:'https://provider.example.invalid/v1'}}).api_key,undefined);
-  assert.equal(genieChatConfig({...config,genie_chat:{...config.genie_chat,api_key:'explicit-example'}}).api_key,'explicit-example');
-});
+
 
 test('Current Jobs priority control requires local origin, CSRF and explicit management',async t=>{
   const changes=[],input={request_id:'queued-request',expected_priority:'normal',priority:'high'};
   const management={read:async()=>({}),act:async(action,value)=>{changes.push({action,value});return {priority:value.priority};}};
   const jobs={read:async()=>({schema:1,queue_priority_version:1,jobs:[]})};
-  const server=createDashboard(()=>({version:1,devices:[]}),undefined,management,null,null,jobs);
+  const server=createDashboard(()=>({version:1,devices:[]}), {management, currentJobs:jobs});
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
   const origin=`http://127.0.0.1:${server.address().port}`,state=await(await fetch(origin+'/api/current-jobs')).json();
   assert.equal(state.priority_edit_enabled,true);
@@ -1141,7 +951,7 @@ test('Current Jobs priority control requires local origin, CSRF and explicit man
   assert.equal((await post({...headers,'content-type':'text/plain'})).status,415);
   assert.equal((await post(headers,'broken')).status,400);assert.equal(changes.length,0);
   assert.equal((await post(headers)).status,200);assert.deepEqual(changes,[{action:'job-priority',value:input}]);
-  const readOnly=createDashboard(()=>({version:1,devices:[]}),undefined,null,null,null,jobs);
+  const readOnly=createDashboard(()=>({version:1,devices:[]}), {currentJobs:jobs});
   readOnly.listen(0,'127.0.0.1');await once(readOnly,'listening');t.after(()=>{readOnly.closeAllConnections();readOnly.close();});
   const readOrigin=`http://127.0.0.1:${readOnly.address().port}`,readState=await(await fetch(readOrigin+'/api/current-jobs')).json();
   assert.equal(readState.priority_edit_enabled,false);
@@ -1149,16 +959,7 @@ test('Current Jobs priority control requires local origin, CSRF and explicit man
   assert.equal(changes.length,1);
 });
 
-test('fleet reviewer reuses matching chat reasoning and preserves independent provider choices',()=>{
- const config={port:30000,model:'qwen-example',api_key:'local',genie_chat:{url:'http://127.0.0.1:30000/v1',model:'qwen-example',reasoning_effort:'xhigh'}};
- let runtime=genieRuntimeConfig(config);assert.equal(runtime.reasoning_effort,'xhigh');assert.equal(runtime.fallback.reasoning_effort,'xhigh');
- config.genie={url:config.genie_chat.url,model:config.model,fallback:{url:config.genie_chat.url,model:config.model}};
- runtime=genieRuntimeConfig(config);assert.equal(runtime.reasoning_effort,'xhigh');assert.equal(runtime.fallback.reasoning_effort,'xhigh');
- config.genie.reasoning_effort='medium';assert.equal(genieRuntimeConfig(config).reasoning_effort,'medium');
- delete config.genie.reasoning_effort;config.genie_chat.reasoning_effort=null;assert.equal(genieRuntimeConfig(config).reasoning_effort,null);
- config.genie_chat.model='another-model';assert.equal(genieRuntimeConfig(config).reasoning_effort,undefined);
- config.genie_chat.model=config.model;config.genie_chat.url='http://127.0.0.1:9001/v1';assert.equal(genieRuntimeConfig(config).reasoning_effort,undefined);
-});
+
 
 test('configuration comparison preserves zero/off and distinguishes missing records from unknown settings',()=>{
  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
@@ -1167,28 +968,10 @@ test('configuration comparison preserves zero/off and distinguishes missing reco
 });
 
 
-test('chat notebook access requires an explicit boolean installation setting',()=>{
- const config={port:30000,genie_chat:{url:'http://127.0.0.1:30000/v1'}};
- assert.equal(genieChatConfig(config).operational_notebook,undefined);
- for(const value of [true,false])assert.equal(genieChatConfig({...config,genie_chat:{...config.genie_chat,operational_notebook:value}}).operational_notebook,value);
- for(const value of ['true',1,null])assert.throws(()=>genieChatConfig({...config,genie_chat:{...config.genie_chat,operational_notebook:value}}),/must be boolean/);
-});
 
 
-test('real dashboard wires only explicit chat notebook access and keeps notes out of general status',async t=>{
- const {GenieMemory}=await import('./genie-memory.mjs');
- const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'sg-notebook-wiring-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- const memory=new GenieMemory(path.join(root,'runtime/genie/memory'));memory.setEnabled(true);memory.saveOperatorNote({text:'PRIVATE_WIRING_NOTE'},{gateway:{workers:[]}});const before=fs.readFileSync(memory.file);
- const core=http.createServer((_req,res)=>res.end(JSON.stringify({version:1,model:'example',workers:[],healthy:0,total:0,active:0,queued:0})));core.listen(0,'127.0.0.1');await once(core,'listening');t.after(()=>{core.closeAllConnections();core.close();});
- const source=path.join(root,'hermes-source');fs.mkdirSync(source);
- for(const enabled of [undefined,true,false]){
-  const file=path.join(root,'config.json');fs.writeFileSync(file,JSON.stringify({port:core.address().port,api_key:'synthetic',nodes:[],genie:false,state_file:path.join(root,'runtime/state.json'),genie_chat:{source,python:'/usr/bin/python3',url:'http://example.invalid/v1',model:'example',...(enabled===undefined?{}:{operational_notebook:enabled})}}));
-  const app=await runDashboard(file,0);
-  try{const origin='http://127.0.0.1:'+app.server.address().port;const state=await(await fetch(origin+'/api/genie/chat')).json();assert.equal(state.notebook_access,enabled===true);for(const route of ['/api/status','/api/diagnostics'])assert.doesNotMatch(await(await fetch(origin+route)).text(),/PRIVATE_WIRING_NOTE/);}
-  finally{app.close();}
- }
- assert.ok(fs.readFileSync(memory.file).equals(before));
-});
+
+
 
 // Fleet media status is display-only; job completion and LLM return are separate.
 test('Fleet projection follows the active batch job and omits private native data',async()=>{
@@ -1214,7 +997,7 @@ test('Fleet media UI distinguishes runner heartbeat from generation progress and
 });
 test('Fleet workload reads are bounded and cannot hold up ordinary telemetry',async()=>{
   let resolveRead,calls=0;const pending=new Promise(resolve=>{resolveRead=resolve;});
-  const server=createDashboard(()=>({time:1000}),undefined,{media:()=>{calls++;return pending;}});server.listen(0,'127.0.0.1');await once(server,'listening');
+  const server=createDashboard(()=>({time:1000}), {management:{media:()=>{calls++;return pending;}}});server.listen(0,'127.0.0.1');await once(server,'listening');
   const base=`http://127.0.0.1:${server.address().port}`;
   try{
     const waiting=fetch(base+'/api/fleet-workloads');
@@ -1234,9 +1017,25 @@ test('Fleet native progress shows current node steps and disconnected evidence w
  assert.match(render({...p,node_type:'VAEDecode'}),/Node progress: 12 of 20/);
 });
 
+test('Native media rows label pair members and never report an unknown or stale queue as empty',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const rows=[{worker_id:'pair',member:0,engine:'ace-step',state:'unknown',reason:'Queue unavailable',observed_at:9900},{worker_id:'pair',member:1,engine:'comfyui',state:'idle',observed_at:9900}];
+ const render=()=>vm.runInContext("nativeMediaMarkup('pair',10000,['spark1','spark2'])",context);
+ vm.runInContext(`fleetWorkloads={native_engines:${JSON.stringify(rows)}}`,context);
+ const html=render();assert.match(html,/Spark 1/);assert.match(html,/Spark 2/);assert.match(html,/Unknown/);assert.equal((html.match(/Queue empty/g)??[]).length,1);assert.match(html,/<details class="fleet-native-details">/);
+ assert.match(html,/<summary class="media-uncertain">Media · 1 unavailable<\/summary>/);
+ assert.ok(html.indexOf('<details')<html.indexOf('fleet-native-row'),'Inactive queues start inside the closed disclosure');
+ vm.runInContext("fleetWorkloads.native_engines[0]={...fleetWorkloads.native_engines[0],state:'busy',running_count:2,waiting_count:1}",context);
+ const busy=render();assert.ok(busy.indexOf('fleet-native-row')<busy.indexOf('<details'),'Current work remains on the card face');assert.match(busy,/2 running · 1 queued/);assert.match(busy,/Media · 1 active engine/);
+ vm.runInContext('fleetWorkloadsUnavailable=true',context);
+ assert.doesNotMatch(render(),/Queue empty/);assert.match(render(),/Stale/);
+ vm.runInContext('fleetWorkloadsUnavailable=false;fleetWorkloads.native_engines[0].observed_at=null;fleetWorkloads.native_engines.pop()',context);
+ assert.match(render(),/Not checked/);assert.match(render(),/Media · on demand/);assert.doesNotMatch(render(),/Queue empty/);
+});
+
 test('Fleet catalogue route assembles enrolled members, machines and routes',async()=>{
   const catalogue=async()=>({built_at:1,entries:[{id:'glm53f-sparks12',machines:['spark1'],scripts:['status'],routes:['GLM-5.3-Flash-EXL3'],state:'serving-llm',detail:'healthy, idle',gateway_worker:true,observed_at:null,sources:{}}],warnings:['route orphan targets ghost-worker, which has no enrolled scripts']});
-  const server=createDashboard(()=>({version:1,read_only:true,devices:[],gateway:{workers:[],model_routes:{}}}),undefined,{catalogue});
+  const server=createDashboard(()=>({version:1,read_only:true,devices:[],gateway:{workers:[],model_routes:{}}}), {management:{catalogue}});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const base=`http://127.0.0.1:${server.address().port}`;
   try{
@@ -1244,7 +1043,7 @@ test('Fleet catalogue route assembles enrolled members, machines and routes',asy
     assert.equal(reply.entries[0].id,'glm53f-sparks12');assert.equal(reply.entries[0].state,'serving-llm');assert.deepEqual(reply.entries[0].machines,['spark1']);
     assert.equal(reply.warnings.length,1);
   }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
-  const bare=createDashboard(()=>({version:1,read_only:true}),undefined,null);bare.listen(0,'127.0.0.1');await once(bare,'listening');
+  const bare=createDashboard(()=>({version:1,read_only:true}));bare.listen(0,'127.0.0.1');await once(bare,'listening');
   try{
     const reply=await (await fetch(`http://127.0.0.1:${bare.address().port}/api/fleet/catalogue`)).json();
     assert.equal(reply.unavailable,true);assert.deepEqual(reply.entries,[]);
@@ -1253,11 +1052,90 @@ test('Fleet catalogue route assembles enrolled members, machines and routes',asy
 
 test('Fleet catalogue is included in fleet power status evidence for Genie agreement',async()=>{
   const runner={busy:()=>false,receipts:()=>[]};
-  const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[{id:'glm53f-sparks12',is_healthy:true,drained:false,load:0,queued:0}]})});
+  const tools=createFleetPowerService({runner,read:async()=>({version:1,workers:[{id:'glm53f-sparks12',is_healthy:true,drained:false,load:0,queued:0}]})});
   const status=await tools.tool({action:'status'});
   assert.ok(!status.catalogue,'no catalogue builder provided, none promised');
-  const withCat=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]}),catalogue:async()=>({built_at:7,entries:[{id:'glm53f-m3',state:'engine-stopped'}],warnings:[]})});
+  const withCat=createFleetPowerService({runner,read:async()=>({version:1,workers:[]}),catalogue:async()=>({built_at:7,entries:[{id:'glm53f-m3',state:'engine-stopped'}],warnings:[]})});
   const value=await withCat.tool({action:'status'});
   assert.equal(value.catalogue.entries[0].id,'glm53f-m3');assert.equal(value.catalogue.entries[0].state,'engine-stopped');
-  assert.throws(()=>createFleetPowerTools({runner,read:async()=>({}),catalogue:'nope'}),/catalogue must be a function/);
+  assert.throws(()=>createFleetPowerService({runner,read:async()=>({}),catalogue:'nope'}),/catalogue must be a function/);
+});
+
+
+test('Fleet presentation groups only mapped paused alternatives and preserves failures, media and conflicts',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const pair={id:'paired-service',physical_machines:['spark1','spark2'],is_healthy:true,drained:false,load:1,queued:0};
+ const first={id:'single-a',physical_machines:['spark1'],is_healthy:false,drained:true,load:0,queued:0},second={...first,id:'single-b',physical_machines:['spark2']};
+ const project=(workers,media=[])=>vm.runInContext(`fleetPresentation(${JSON.stringify(workers)},${JSON.stringify(media)})`,context);
+ const grouped=project([pair,first,second]);assert.equal(grouped.owner.get('single-a'),'paired-service');assert.equal(grouped.nested.get('paired-service').length,2);
+ assert.equal(project([{...pair,is_healthy:false,load:0},first,second]).owner.size,2,'The unavailable intended pair remains primary; its failure is not disguised as two failed machines');
+ assert.equal(project([{...pair,drained:true,load:0},{...first,drained:false,is_healthy:true},{...second,drained:false,is_healthy:true}]).owner.size,0,'Independent serving members stay separate');
+ assert.equal(project([pair,{...first,load:1},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,queued:1},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,quarantine:{reason:'fault'}},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,maintenance_locks:[{name:'owner'}]},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,direct_reserved:true},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,queued:undefined},second]).owner.has('single-a'),false);
+ const direct=vm.runInContext(`mediaWorkerIds(${JSON.stringify([pair,first])},10000,[{id:'single-a',endpoint_metrics:{connected:true,at:9900,running:1}}])`,context);assert.ok(direct.includes('single-a'));
+ assert.equal(project([pair,first,second],['single-a']).owner.has('single-a'),false,'An independently active media member stays visible');
+ const conflict=project([pair,{...first,is_healthy:true,drained:false},second]);assert.ok(conflict.conflicts.get('paired-service').includes('single-a'));
+ assert.equal(project([pair,{...pair,id:'second-pair'},first]).owner.size,2,'Identical hardware has one card; both active endpoints and their conflict remain inside it');
+ assert.equal(project([pair,{...first,physical_machines:undefined}]).owner.size,0,'Names cannot substitute for missing topology');
+ assert.equal(project([{...pair,physical_machines:['spark1','spark1']},first]).owner.size,0,'Invalid duplicate mappings cannot form a group');
+ const split=project([{...pair,drained:true,load:0},{...first,is_healthy:true,drained:false,load:1}]);assert.ok(split.sharedWith.get('paired-service').includes('single-a'));
+ vm.runInContext('workerControlsReady=true',context);
+ const blocked=vm.runInContext(`routingMarkup(${JSON.stringify(first)},{blockedBy:['paired-service']})`,context);assert.match(blocked,/disabled/);assert.match(blocked,/Manage that service before resuming/);
+});
+
+
+test('gateway-only dashboard rejects legacy bot routes and serves no bot entry point',async t=>{
+ const {url}=await fixture(t);
+ const html=await(await fetch(url)).text();
+ assert.doesNotMatch(html,/id="tab-genie"|src="\/genie-|id="conversation-form"/);
+ for(const route of ['/api/genie','/api/genie/chat','/api/genie/telegram','/api/genie/power-tools']){
+  for(const method of ['GET','POST'])assert.equal((await fetch(url+route,{method})).status,410);
+ }
+ assert.equal((await fetch(url+'/api/status')).status,200);
+});
+
+test('fleet availability counts physical serving groups instead of alternative profiles',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const worker=(id,machines,more={})=>({id,physical_machines:machines,is_healthy:false,drained:false,load:0,queued:0,...more});
+  const workers=[worker('spark1',['spark1'],{drained:true}),worker('spark2',['spark2'],{drained:true}),
+    worker('pair12',['spark1','spark2'],{quarantine:{reason:'fault'}}),worker('pair34',['spark3','spark4'],{is_healthy:true,load:2}),
+    worker('m3-active',['m3'],{last_request_finished_at:'2026-09-27T20:00:00Z'}),worker('m3-alternative',['m3'])];
+  const count=()=>JSON.parse(JSON.stringify(vm.runInContext(`fleetAvailability(${JSON.stringify(workers)})`,context)));
+  assert.deepEqual(count(),{available:1,total:3});
+  workers[4].is_healthy=true;assert.deepEqual(count(),{available:2,total:3});
+  workers[4].is_healthy=false;workers[5].is_healthy=true;assert.deepEqual(count(),{available:2,total:3});
+  workers[3].drained=true;assert.deepEqual(count(),{available:1,total:3});
+});
+
+
+test('one physical M3 stays one card when an alternative is quarantined or active',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const a={id:'active',physical_machines:['m3'],is_healthy:true,drained:false,load:1,queued:0},b={...a,id:'alternative',is_healthy:false,drained:true,load:0,quarantine:{reason:'failed'}};
+ for(const alternate of [b,{...b,is_healthy:true,drained:false,load:1}]){
+   const w=JSON.stringify([a,alternate]);
+   assert.equal(vm.runInContext(`fleetAvailability(${w}).total`,context),1);
+   assert.equal(vm.runInContext(`fleetPresentation(${w}).nested.get('active')[0].id`,context),'alternative');
+   const markup=vm.runInContext(`alternativeServicesMarkup([${JSON.stringify(alternate)}],${JSON.stringify(a)})`,context);
+   assert.match(markup,/QUARANTINED/);
+ }
+ const html=vm.runInContext(`timeline({activity:[{start:1000,end:9000,phase:'working'}]},10000)`,context);
+ assert.match(html,/phase-working/);assert.match(html,/Busy; phase unavailable/);
+});
+
+
+test('manual media refresh invokes the explicit reader and returns completed observations',async()=>{
+ let automatic=0,manual=0;const nativeMedia=()=>{automatic++;return [];};
+ nativeMedia.refresh=async inventory=>{manual++;assert.deepEqual(inventory,{jobs:[]});return [{state:'idle',observed_at:1000}];};
+ const server=createDashboard(()=>({}),{management:{media:async()=>({jobs:[]}),nativeMedia}});
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{const base=`http://127.0.0.1:${server.address().port}`;
+  assert.equal((await(await fetch(base+'/api/fleet-workloads?refresh=1')).json()).native_engines[0].state,'idle');
+  assert.equal(manual,1);assert.equal(automatic,0);
+  await fetch(base+'/api/fleet-workloads');assert.equal(manual,1);assert.equal(automatic,1);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

@@ -1,3 +1,4 @@
+import {mediaPairReturn} from './media-pair-return.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
@@ -25,7 +26,8 @@ let phase='',detail='',changedAt,batch={};
 const progress=(next,message,context=batch)=>{if(next!==phase||message!==detail||context.active_job_id!==batch.active_job_id)changedAt=new Date().toISOString();phase=next;detail=message;batch=context;save('progress.json',{phase,detail,...batch,changed_at:changedAt,heartbeat_at:new Date().toISOString()});};
 const heartbeat=setInterval(()=>{if(phase)progress(phase,detail);},5000);heartbeat.unref();
 try{
-  const result=await runMediaCycle(p,{
+  const pair=mediaPairReturn(p,save);
+  const result=await runMediaCycle(p,{pair,
     jobs:new MediaJobs(path.join(folder,'media-jobs.json'),{resultsDirectory:p.results_directory,inputsDirectory:p.inputs_directory}),save,progress,delay,
     continueBatch:async next=>{
       const status=await workerControl(p.control_socket,'/media-jobs');
@@ -34,8 +36,8 @@ try{
     maintenance:async action=>JSON.parse((await execute(p.python,['-I','-B',maintenanceScript,folder,action],{maxBuffer:1024*1024})).stdout),
     hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway','acquire.intent.json')),
     inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),
-    recoveryInspect:()=>recoveryCall(p.recovery,{action:'inspect'}),
-    verify:async()=>{const proof=await verifyRecovery(p.recovery.url,p.model,p.context_length,{kind:'qwen_vllm'});if(!qwenRecoveryProofValid(proof,p.context_length))throw new Error('Original LLM response/cache checks failed');return proof;},
+    recoveryInspect:()=>pair?pair.recoveryInspect():recoveryCall(p.recovery,{action:'inspect'}),
+    verify:async()=>{if(pair)return pair.verify();const proof=await verifyRecovery(p.recovery.url,p.model,p.context_length,{kind:'qwen_vllm'});if(!qwenRecoveryProofValid(proof,p.context_length))throw new Error('Original LLM response/cache checks failed');return proof;},
     connect:async()=>{
       const listener=net.createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
       const fd=fs.openSync(path.join(folder,'tunnel.log'),'a',0o600);

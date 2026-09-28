@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 
-// Inference endpoints own model selection and tokenization. DSG only validates
-// the advertised pool capacity and transports the original request bytes.
+// Endpoints own tokenization. The logical pool name resolves from their existing
+// model discovery; explicit model names and the rest of each request stay intact.
 export function endpointUrl(worker, route) {
   if (worker.backend !== 'openai') return new URL(route, worker.url);
   const base = worker.url.replace(/\/$/, '');
@@ -24,11 +24,26 @@ export function endpointHeaders(worker) {
   return { authorization: `Bearer ${token}` };
 }
 
+// Reuse /models from the normal health probe; no extra poll or per-call lookup.
+// A valid explicit target wins on multi-model servers. A single-model server
+// needs no manually maintained PoolModel alias, even after a model replacement.
+export function endpointAliases(worker, data, {model, model_agnostic=false}={}) {
+  const aliases={...worker.model_aliases};
+  if(!model||!(model_agnostic||worker.backend==='openai'))return aliases;
+  const ids=[...new Set((Array.isArray(data?.data)?data.data:[]).map(m=>m?.id).filter(id=>typeof id==='string'&&id.length))];
+  const target=ids.includes(aliases[model])?aliases[model]:ids.includes(model)?model:ids.length===1?ids[0]:null;
+  if(target)aliases[model]=target;
+  else delete aliases[model]; // Never select an arbitrary model from a catalogue.
+  return aliases;
+}
+
 const capacity = value => Number.isSafeInteger(value) && value > 0 ? value : null;
 export function endpointMetadata(worker, data, { model, model_agnostic = false } = {}) {
   const models = Array.isArray(data?.data) ? data.data.filter(m => m && typeof m.id === 'string' && m.id.length) : [];
   const aliasIds=Object.values(worker.model_aliases??{});
-  if(aliasIds.some(id=>!models.some(m=>m.id===id)))return {available:false,contextLength:null,probeModel:null};
+  // Dormant aliases must not take a healthy model-agnostic pool worker offline.
+  if(!model_agnostic&&worker.backend!=='openai'&&aliasIds.some(id=>!models.some(m=>m.id===id)))return {available:false,contextLength:null,probeModel:null};
+  const aliases=endpointAliases(worker,data,{model,model_agnostic});
   const candidates = model_agnostic || worker.backend === 'openai' ? models : models.filter(m => m.id === model);
   const configured = capacity(worker.context_length);
   const limits = candidates.map(m => {
@@ -38,7 +53,10 @@ export function endpointMetadata(worker, data, { model, model_agnostic = false }
   return {
     available: candidates.length > 0,
     contextLength: limits.length && limits.every(n => n !== null) ? Math.min(...limits) : null,
-    // Used only for an explicit operator recovery canary, never for inference.
-    probeModel: candidates[0]?.id,
+    aliases,
+    // This native Qwen dialect calls its highest effort xhigh, not max.
+    // Limit adaptation to a single advertised Qwen 3.8 model; never affect GLM.
+    reasoningEffortAliases: models.length===1&&/(?:^|\/)Qwen3\.8(?:-|$)/i.test(models[0].id)?{max:'xhigh'}:undefined,
+    probeModel: aliases[model] ?? candidates[0]?.id,
   };
 }
