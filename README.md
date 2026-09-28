@@ -529,3 +529,9 @@ same resolution. Updates take effect after the next successful existing health
 probe (normally within five seconds); model changes should finish before new
 work is admitted. This adds no polls, LLM calls or inference retries, and does
 not alter context limits, generation settings or request concurrency.
+
+On a single-model Qwen 3.8 backend, maximum reasoning is spelled `xhigh`.
+The gateway translates a top-level Chat Completions `reasoning_effort: "max"`
+to that native spelling. This preserves maximum reasoning; it does not change
+Genie's saved setting or requests sent to GLM. Other effort values, nested tool
+arguments, prompts and generation parameters pass through unchanged.

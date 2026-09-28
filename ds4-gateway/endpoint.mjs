@@ -54,6 +54,9 @@ export function endpointMetadata(worker, data, { model, model_agnostic = false }
     available: candidates.length > 0,
     contextLength: limits.length && limits.every(n => n !== null) ? Math.min(...limits) : null,
     aliases,
+    // This native Qwen dialect calls its highest effort xhigh, not max.
+    // Limit adaptation to a single advertised Qwen 3.8 model; never affect GLM.
+    reasoningEffortAliases: models.length===1&&/(?:^|\/)Qwen3\.8(?:-|$)/i.test(models[0].id)?{max:'xhigh'}:undefined,
     probeModel: aliases[model] ?? candidates[0]?.id,
   };
 }

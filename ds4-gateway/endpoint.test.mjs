@@ -80,11 +80,12 @@ test('pool discovery resolves single models and preserves explicit choices witho
 
 test('PoolModel follows backend replacements and new registrations through discovery and inference',async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-pool-discovery-'));
-  let model='native-first';const bodies=[];
+  let model='Qwen/Qwen3.8-Flash-Next';const bodies=[];
   const backend=http.createServer((req,res)=>{
     if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:model,context_length:262144}]}));return;}
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{
       bodies.push(body);const input=JSON.parse(body);
+      if(model==='Qwen/Qwen3.8-Flash-Next'&&input.reasoning_effort==='max'){res.writeHead(400);res.end('{}');return;}
       if(input.model!==model){res.writeHead(404,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'unknown model'}}));return;}
       res.writeHead(200,{'content-type':'text/event-stream'});
       res.end('data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
@@ -101,10 +102,12 @@ test('PoolModel follows backend replacements and new registrations through disco
     assert.ok(listed.data.some(m=>m.id==='PoolModel'));
     const response=await fetch(base+'/v1/chat/completions',{method:'POST',headers:{...headers,'content-length':Buffer.byteLength(body)},body});
     assert.equal(response.status,200);assert.match(await response.text(),/\[DONE\]/);
-    assert.equal(bodies.at(-1),body.replace('"model": "PoolModel"',`"model": "${expected}"`));
+    let expectedBody=body.replace('"model": "PoolModel"',`"model": "${expected}"`);
+    if(expected==='Qwen/Qwen3.8-Flash-Next')expectedBody=expectedBody.replace('"reasoning_effort": "max"','"reasoning_effort": "xhigh"');
+    assert.equal(bodies.at(-1),expectedBody);
     assert.equal(gateway.stats().workers.find(w=>w.is_healthy&&!w.drained).served_model,expected);
   }
-  await check('native-first');
+  await check('Qwen/Qwen3.8-Flash-Next');
   model='native-second';
   const deadline=Date.now()+3000;
   while(gateway.stats().workers[0].served_model!==model){if(Date.now()>deadline)throw Error('model discovery did not refresh');await new Promise(r=>setTimeout(r,10));}

@@ -767,6 +767,15 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     const resolvedAliases=node.effectiveModelAliases ?? node.model_aliases;
     const aliases=resolvedAliases&&Object.keys(resolvedAliases).length?resolvedAliases:undefined;
     const { req, res } = job;
+    const effortAliases=req.url==='/v1/chat/completions'?node.reasoningEffortAliases:undefined;
+    const rewriteRequired=aliases||profiles[node.id]||effortAliases;
+    const rewriteBody=()=>{
+      const transforms=[];
+      if(profiles[node.id])transforms.push(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url));
+      if(aliases)transforms.push(modelAliasTransform(aliases,req.headers['content-encoding']));
+      if(effortAliases)transforms.push(modelAliasTransform(effortAliases,req.headers['content-encoding'],'reasoning_effort'));
+      return transforms.length===1?transforms[0]:compose(...transforms);
+    };
     const requestBody=job.queuedBody?.stream()??req;
     job.dispatched = Date.now();
     job.dispatchedMono=performance.now();
@@ -996,7 +1005,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let gotResponse=false,freshConnectingSocket=false,connected=false;
       const attemptHeaders={...headers};
       if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
-      if(aliases||profiles[node.id])delete attemptHeaders['content-length'];
+      if(rewriteRequired)delete attemptHeaders['content-length'];
       const upstream=endpointTransport(target).request(target,{...upstreamOptions(node,target),method:req.method,headers:attemptHeaders},up=>{
         gotResponse=true;
         if(up.statusCode===400&&visionProtection.enabled&&(retry||captureLimit))bufferCandidate(up,retry);
@@ -1026,7 +1035,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       });
       upstream.on('close',()=>{if(!settled&&(job.cancelled||!gotResponse))finish(job.cancelled?'client_cancelled':'connection_closed');});
       if(replacement){
-        if(aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(aliases??{},req.headers['content-encoding'])):modelAliasTransform(aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
+        if(rewriteRequired){const rewrite=rewriteBody();rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
         else upstream.end(replacement);
       }
       return upstream;
@@ -1038,7 +1047,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     // A queued read-ahead prefix feeds the same observers and upstream once,
     // followed by the still-streaming original upload with backpressure.
     requestBody.on('data',observeBody);requestBody.once('end',bodyEnded);req.once('aborted',bodyAborted);requestBody.once('error',bodyAborted);
-    if(aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(aliases??{},req.headers['content-encoding'])):modelAliasTransform(aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
+    if(rewriteRequired){const rewrite=rewriteBody();rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
     else requestBody.pipe(upstream);
   }
 
@@ -1102,6 +1111,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             const data = JSON.parse(body); if (!Array.isArray(data.data)) throw new Error();
             const aliases=endpointAliases(node,data,config);
             node.effectiveModelAliases=aliases;
+            node.reasoningEffortAliases=endpointMetadata(node,data,config).reasoningEffortAliases;
             if(Object.keys(aliases).length){const originals=[...data.data];for(const [alias,id] of Object.entries(aliases)){const model=originals.find(m=>m.id===id);if(model&&!data.data.some(m=>m.id===alias))data.data.push({...model,id:alias,owned_by:'dsg-pool'});}}
             const publishedContext=modelRoute?Math.min(...nodes.filter(n=>modelRoute.workers.has(n.id)).map(n=>n.context_length??contextLimit())):contextLimit();
             // Explicit routes publish their guarantee; unselected traffic keeps the pool limit.
@@ -1224,7 +1234,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             const metadata = endpointMetadata(node, JSON.parse(body), config);
             node.modelMatches = res.statusCode === 200 && metadata.available;
             node.probeModel = metadata.probeModel;
-            if(res.statusCode===200&&metadata.available)node.effectiveModelAliases=metadata.aliases;
+            if(res.statusCode===200&&metadata.available){node.effectiveModelAliases=metadata.aliases;node.reasoningEffortAliases=metadata.reasoningEffortAliases;}
             const previousContext=node.contextLength;
             node.contextLength = metadata.contextLength;
             if(previousContext!==undefined && previousContext!==node.contextLength)observe(()=>shadow.reset(node.id));
