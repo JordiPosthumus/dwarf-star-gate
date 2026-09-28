@@ -513,3 +513,19 @@ override still takes precedence. Saving does not restart Hermes or reset its
 conversation. **Test connection** only lists provider models and submits no
 inference. Credentials remain managed by native Hermes setup. Dashboard status
 polling reads local runtime state and does not ask Genie to generate reports.
+
+### Pool model discovery
+
+For OpenAI-compatible or model-agnostic workers, the gateway resolves its logical
+pool name (usually `PoolModel`) from the existing `/v1/models` health check. A
+single-model endpoint automatically follows model replacements, including a
+stale saved pool alias. A valid configured pool alias takes precedence on a
+multi-model endpoint; otherwise a native model matching the pool name is used.
+An ambiguous catalogue requires an explicit pool alias; list order is never a
+model-selection policy. Other explicit model names and aliases remain unchanged.
+
+Model discovery, request translation and the displayed serving model use the
+same resolution. Updates take effect after the next successful existing health
+probe (normally within five seconds); model changes should finish before new
+work is admitted. This adds no polls, LLM calls or inference retries, and does
+not alter context limits, generation settings or request concurrency.

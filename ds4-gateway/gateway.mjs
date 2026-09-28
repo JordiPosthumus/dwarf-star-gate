@@ -30,7 +30,7 @@ import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, workerFields, assertUniqueWorker, sshTargets, replaceSshFallbacks } from './worker-config.mjs';
-import {endpointUrl, endpointTransport, endpointHeaders, endpointMetadata} from './endpoint.mjs';
+import {endpointUrl, endpointTransport, endpointHeaders, endpointMetadata, endpointAliases} from './endpoint.mjs';
 import { Recovery } from './recovery.mjs';
 import { classifySshFailure } from './recovery-transport.mjs';
 import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
@@ -426,7 +426,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       requested_thinking: activeCount(n)===1?n.active.thinking?.result??null:null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
-      served_model: n.model_aliases?.[config.model] ?? null,
+      served_model: (n.effectiveModelAliases ?? n.model_aliases)?.[config.model] ?? null,
       direct_reserved: directReserved(n),
       health_probe_deferred:n.healthProbeDeferred,
       health_state_source:n.probeError==='busy_probe_deferred'?'recent_upstream_progress':'model_probe',
@@ -763,6 +763,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     slot.turnTimer.unref?.();
   }
   function dispatch(node, job) {
+    // Capture one resolved mapping for the whole request, including image repair.
+    const resolvedAliases=node.effectiveModelAliases ?? node.model_aliases;
+    const aliases=resolvedAliases&&Object.keys(resolvedAliases).length?resolvedAliases:undefined;
     const { req, res } = job;
     const requestBody=job.queuedBody?.stream()??req;
     job.dispatched = Date.now();
@@ -993,7 +996,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let gotResponse=false,freshConnectingSocket=false,connected=false;
       const attemptHeaders={...headers};
       if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
-      if(node.model_aliases||profiles[node.id])delete attemptHeaders['content-length'];
+      if(aliases||profiles[node.id])delete attemptHeaders['content-length'];
       const upstream=endpointTransport(target).request(target,{...upstreamOptions(node,target),method:req.method,headers:attemptHeaders},up=>{
         gotResponse=true;
         if(up.statusCode===400&&visionProtection.enabled&&(retry||captureLimit))bufferCandidate(up,retry);
@@ -1023,7 +1026,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       });
       upstream.on('close',()=>{if(!settled&&(job.cancelled||!gotResponse))finish(job.cancelled?'client_cancelled':'connection_closed');});
       if(replacement){
-        if(node.model_aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(node.model_aliases??{},req.headers['content-encoding'])):modelAliasTransform(node.model_aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
+        if(aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(aliases??{},req.headers['content-encoding'])):modelAliasTransform(aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
         else upstream.end(replacement);
       }
       return upstream;
@@ -1035,7 +1038,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     // A queued read-ahead prefix feeds the same observers and upstream once,
     // followed by the still-streaming original upload with backpressure.
     requestBody.on('data',observeBody);requestBody.once('end',bodyEnded);req.once('aborted',bodyAborted);requestBody.once('error',bodyAborted);
-    if(node.model_aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(node.model_aliases??{},req.headers['content-encoding'])):modelAliasTransform(node.model_aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
+    if(aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(aliases??{},req.headers['content-encoding'])):modelAliasTransform(aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
     else requestBody.pipe(upstream);
   }
 
@@ -1097,7 +1100,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           try {
             if (up.statusCode !== 200) throw new Error();
             const data = JSON.parse(body); if (!Array.isArray(data.data)) throw new Error();
-            if(node.model_aliases){const originals=[...data.data];for(const [alias,id] of Object.entries(node.model_aliases)){const model=originals.find(m=>m.id===id);if(model&&!data.data.some(m=>m.id===alias))data.data.push({...model,id:alias,owned_by:'dsg-pool'});}}
+            const aliases=endpointAliases(node,data,config);
+            node.effectiveModelAliases=aliases;
+            if(Object.keys(aliases).length){const originals=[...data.data];for(const [alias,id] of Object.entries(aliases)){const model=originals.find(m=>m.id===id);if(model&&!data.data.some(m=>m.id===alias))data.data.push({...model,id:alias,owned_by:'dsg-pool'});}}
             const publishedContext=modelRoute?Math.min(...nodes.filter(n=>modelRoute.workers.has(n.id)).map(n=>n.context_length??contextLimit())):contextLimit();
             // Explicit routes publish their guarantee; unselected traffic keeps the pool limit.
             // Explicit per-worker aliases only rewrite the top-level request model.
@@ -1219,6 +1224,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             const metadata = endpointMetadata(node, JSON.parse(body), config);
             node.modelMatches = res.statusCode === 200 && metadata.available;
             node.probeModel = metadata.probeModel;
+            if(res.statusCode===200&&metadata.available)node.effectiveModelAliases=metadata.aliases;
             const previousContext=node.contextLength;
             node.contextLength = metadata.contextLength;
             if(previousContext!==undefined && previousContext!==node.contextLength)observe(()=>shadow.reset(node.id));
