@@ -528,15 +528,15 @@ function nativeMediaMarkup(id,now,machines=[]){
     const machine=(Number.isSafeInteger(row.member)?machines?.[row.member]:machines?.length===1?machines[0]:null);
     const host=machine?machine.replace(/^spark(\d+)$/i,'Spark $1'):Number.isSafeInteger(row.member)?`Member ${row.member+1}`:id;
     const counts=Number.isSafeInteger(row.running_count)&&Number.isSafeInteger(row.waiting_count);
-    const label=!fresh?(row.observed_at==null?'Awaiting status':'Stale'):state==='busy'?(counts?`${row.running_count} running · ${row.waiting_count} queued`:'Busy'):state==='idle'?'Queue empty':'Unknown';
+    const label=!fresh?(row.observed_at==null?'Not checked':'Stale'):state==='busy'?(counts?`${row.running_count} running · ${row.waiting_count} queued`:'Busy'):state==='idle'?'Queue empty':'Unknown';
     const detail=!fresh?'Current queue observation unavailable.':state==='unknown'?(row.reason??'Native queue unavailable.'):state==='idle'?'Native queue observed empty.':label;
     return {row,state,name,host,label,detail};
   });
   const active=observed.filter(item=>item.state==='busy'),inactive=observed.filter(item=>item.state!=='busy');
   const uncertain=inactive.filter(item=>item.state!=='idle').length;
-  const summary=[active.length?`${active.length} active engine${active.length===1?'':'s'}`:null,uncertain?`${uncertain} unavailable`:null,!active.length&&!uncertain?'Queues empty':null].filter(Boolean).join(' · ');
+  const summary=rows.every(row=>row.observed_at==null)?'on demand':[active.length?`${active.length} active engine${active.length===1?'':'s'}`:null,uncertain?`${uncertain} unavailable`:null,!active.length&&!uncertain?'Queues empty':null].filter(Boolean).join(' · ');
   const rowMarkup=({row,state,name,host,label,detail})=>`<div class="fleet-native-row" data-state="${esc(state)}" title="${esc(detail)}"><span class="fleet-native-host">${esc(host)}</span><strong>${esc(name)}</strong><span class="fleet-native-state">${esc(label)}</span><span class="fleet-native-age">${Number.isFinite(row.observed_at)?age(row.observed_at,now):'—'}</span></div>`;
-  return `<div class="fleet-native-media" aria-label="Native media engines">${active.map(rowMarkup).join('')}<details class="fleet-native-details"><summary${uncertain?' class="media-uncertain"':''}>Media · ${esc(summary)}</summary>${inactive.map(rowMarkup).join('')}<p>Queues include direct clients. An empty queue does not prove whole-machine idleness or job completion.</p><dl>${observed.map(({row,name,host,detail})=>`<dt>${esc(host)} · ${esc(name)}</dt><dd>${esc(detail)}${row.state==='busy'&&Array.isArray(row.running)?` Native jobs: ${[...row.running,...(row.waiting??[])].map(esc).join(', ')}.`:''}</dd>`).join('')}</dl></details></div>`;
+  return `<div class="fleet-native-media" aria-label="Native media engines">${active.map(rowMarkup).join('')}<details class="fleet-native-details"><summary${uncertain&&rows.some(row=>row.observed_at!=null)?' class="media-uncertain"':''}>Media · ${esc(summary)}</summary>${inactive.map(rowMarkup).join('')}<p>Idle status is checked on demand from the Media tab. Queues include direct clients. An empty queue does not prove whole-machine idleness or job completion.</p><dl>${observed.map(({row,name,host,detail})=>`<dt>${esc(host)} · ${esc(name)}</dt><dd>${esc(detail)}${row.state==='busy'&&Array.isArray(row.running)?` Native jobs: ${[...row.running,...(row.waiting??[])].map(esc).join(', ')}.`:''}</dd>`).join('')}</dl></details></div>`;
 }
 function device(d, w, now, stale, index = 1, scales={}, controls=false, presentation=null) {
   const workload=workloadInfo(d.id,now);

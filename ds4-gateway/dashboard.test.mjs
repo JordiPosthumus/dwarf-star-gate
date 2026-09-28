@@ -1030,7 +1030,7 @@ test('Native media rows label pair members and never report an unknown or stale 
  vm.runInContext('fleetWorkloadsUnavailable=true',context);
  assert.doesNotMatch(render(),/Queue empty/);assert.match(render(),/Stale/);
  vm.runInContext('fleetWorkloadsUnavailable=false;fleetWorkloads.native_engines[0].observed_at=null;fleetWorkloads.native_engines.pop()',context);
- assert.match(render(),/Awaiting status/);assert.doesNotMatch(render(),/Queue empty/);
+ assert.match(render(),/Not checked/);assert.match(render(),/Media · on demand/);assert.doesNotMatch(render(),/Queue empty/);
 });
 
 test('Fleet catalogue route assembles enrolled members, machines and routes',async()=>{
@@ -1125,4 +1125,17 @@ test('one physical M3 stays one card when an alternative is quarantined or activ
  }
  const html=vm.runInContext(`timeline({activity:[{start:1000,end:9000,phase:'working'}]},10000)`,context);
  assert.match(html,/phase-working/);assert.match(html,/Busy; phase unavailable/);
+});
+
+
+test('manual media refresh invokes the explicit reader and returns completed observations',async()=>{
+ let automatic=0,manual=0;const nativeMedia=()=>{automatic++;return [];};
+ nativeMedia.refresh=async inventory=>{manual++;assert.deepEqual(inventory,{jobs:[]});return [{state:'idle',observed_at:1000}];};
+ const server=createDashboard(()=>({}),{management:{media:async()=>({jobs:[]}),nativeMedia}});
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{const base=`http://127.0.0.1:${server.address().port}`;
+  assert.equal((await(await fetch(base+'/api/fleet-workloads?refresh=1')).json()).native_engines[0].state,'idle');
+  assert.equal(manual,1);assert.equal(automatic,0);
+  await fetch(base+'/api/fleet-workloads');assert.equal(manual,1);assert.equal(automatic,1);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

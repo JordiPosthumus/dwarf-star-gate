@@ -7,6 +7,8 @@ const exec=promisify(execFile);
 // native queue tuples contain full prompts and must never enter dashboard state.
 export function createNativeMediaStatus(config,{run=exec,now=Date.now}={}){
   let rows=[],pending=null,last=-Infinity,identity=null;
+  const retryAfter=new Map();
+  const key=t=>JSON.stringify([t.worker_id,t.member,t.kind]);
   const targetsFor=inventory=>(inventory?.native_targets??mediaNativeEnrollments(config)).map(target=>{
     const worker=(config.workers??config.nodes??[]).find(w=>w.id===target.worker_id)??config.media_jobs?.pairs?.[target.worker_id]?.worker_binding;
     const pair=mediaPair(config,worker);
@@ -31,10 +33,34 @@ export function createNativeMediaStatus(config,{run=exec,now=Date.now}={}){
       return {...base,state:running.length||waiting.length?'busy':'idle',running,waiting,running_count:running.length,waiting_count:waiting.length,observed_at:now()};
     }catch{return {...base,state:'unknown',reason:'Native engine queue unavailable',observed_at:now()};}
   };
-  return inventory=>{
+  const read=(inventory,{refresh=false}={})=>{
     const targets=targetsFor(inventory),current=JSON.stringify(targets);
-    if(current!==identity){identity=current;rows=[];last=-Infinity;}
-    if(!pending&&now()-last>=10000){last=now();pending=Promise.all(targets.map(observe)).then(value=>{if(identity===current)rows=value;}).finally(()=>{pending=null;});}
-    return rows.length?rows:targets.map(t=>({worker_id:t.worker_id,kind:t.kind,engine:t.engine,...(t.member!==undefined?{member:t.member}:{}),state:'unknown',reason:'Awaiting native observation',observed_at:null}));
+    if(current!==identity){identity=current;rows=[];last=-Infinity;retryAfter.clear();}
+    const snapshot=()=>targets.map(t=>rows.find(row=>key(row)===key(t))??{
+      worker_id:t.worker_id,kind:t.kind,engine:t.engine,...(t.member!==undefined?{member:t.member}:{}),
+      state:'unknown',reason:'Not checked. Use Refresh media status when needed.',observed_at:null});
+    const selected=targets.filter(t=>refresh||(inventory?.jobs??[]).some(j=>j.execution?.worker_id===t.worker_id&&j.kind===t.kind&&
+        (j.execution.member===undefined||j.execution.member===t.member)&&
+        !['returned','failed_returned','failed_unchanged'].includes(j.execution.phase))||
+      rows.some(row=>key(row)===key(t)&&row.state==='busy'))
+      .filter(t=>refresh||now()>=(retryAfter.get(key(t))??0));
+    if(!pending&&selected.length&&(refresh||now()-last>=10000)){
+      last=now();pending=Promise.all(selected.map(observe)).then(value=>{
+        if(identity!==current)return;
+        for(const row of value){
+          rows=rows.filter(old=>key(old)!==key(row));rows.push(row);
+          if(row.state==='unknown')retryAfter.set(key(row),now()+60000);else retryAfter.delete(key(row));
+        }
+      }).finally(()=>{pending=null;});
+    }
+    return snapshot();
   };
+  let refreshPending=null;
+  read.refresh=inventory=>refreshPending??=(async()=>{
+    if(pending)await pending;
+    const initial=read(inventory,{refresh:true});
+    if(pending)await pending;
+    return initial.map(row=>rows.find(current=>key(current)===key(row))??row);
+  })().finally(()=>{refreshPending=null;});
+  return read;
 }

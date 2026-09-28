@@ -127,3 +127,13 @@ void refresh();setInterval(refresh,5000);
 
 // Fleet links select the corresponding engine before opening the Media tab.
 document.addEventListener('click',event=>{const link=event.target.closest?.('[data-media-engine]');if(link){selected=link.dataset.mediaEngine;signature='';render();}});
+
+$('media-native-refresh').addEventListener('click',async()=>{
+  const button=$('media-native-refresh'),message=$('media-native-status');button.disabled=true;message.textContent='Checking media engines…';
+  try{
+    const response=await fetch('/api/fleet-workloads?refresh=1',{signal:AbortSignal.timeout(12000)});
+    const value=await response.json();if(!response.ok)throw Error(value.error??'Media check failed.');
+    const rows=value.native_engines??[],count=state=>rows.filter(row=>row.state===state).length;
+    message.textContent=`${count('busy')} busy · ${count('idle')} empty · ${count('unknown')} unavailable. Idle engines are checked on demand.`;
+  }catch(error){message.textContent=error.message;}finally{button.disabled=false;}
+});

@@ -173,6 +173,12 @@ export function createDashboard(getSnapshot, {assetsDirectory = path.join(here, 
       for(const [name,value] of Object.entries(headers))res.setHeader(name,value);
       management.mediaFile(req,res,req.url.replace('/api/media/','/v1/'));return;
     }
+    if(req.url==='/api/fleet-workloads?refresh=1'&&req.method==='GET'){
+      const timer=setTimeout(()=>reply(503,{error:'Media refresh timed out. Existing work is unchanged.'}),10000);
+      void Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(async value=>({
+        ...fleetMediaWorkloads(value),native_engines:await management?.nativeMedia?.refresh?.(value)??[]
+      })).then(value=>reply(200,value)).catch(()=>reply(503,{error:'Media status unavailable.'})).finally(()=>clearTimeout(timer));return;
+    }
     if(req.url==='/api/fleet-workloads'&&req.method==='GET'){
       // Share in-flight I/O, but do not let it stall the separate Fleet telemetry endpoint.
       workloadRead??=Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(value=>({...fleetMediaWorkloads(value),native_engines:management?.nativeMedia?.(value)??[]})).finally(()=>{workloadRead=null;});
