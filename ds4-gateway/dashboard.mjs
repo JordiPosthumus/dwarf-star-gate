@@ -1,3 +1,4 @@
+import {gzip} from 'node:zlib';
 import {createMemoryView} from './hermes-memory.mjs';
 import {createBrainStore} from './hermes-brain.mjs';
 import {createSoulStore,hermesHome} from './hermes-profile.mjs';
@@ -288,7 +289,15 @@ export function createDashboard(getSnapshot, {assetsDirectory = path.join(here, 
     if (req.url === '/api/request-history') return reply(200,requestHistory?requestHistory():{enabled:false,status:'disabled',rows:[]});
     if (req.url === '/api/status' || req.url === '/api/diagnostics') {
       if (req.url === '/api/diagnostics') headers['content-disposition'] = 'attachment; filename="spark-gateway-diagnostics.json"';
-      res.writeHead(200, { ...headers, 'content-type': 'application/json' }); return res.end(JSON.stringify(getSnapshot()));
+      const body=JSON.stringify(getSnapshot());
+      const acceptsGzip=(req.headers['accept-encoding']??'').split(',').some(value=>/^\s*gzip(?:\s*;|\s*$)/i.test(value)&&!/(?:;\s*)q=0(?:\.0*)?(?:\s*;|\s*$)/i.test(value));
+      headers.vary='Accept-Encoding';
+      if(acceptsGzip){gzip(body,{level:1},(error,bytes)=>{
+        if(res.destroyed)return;
+        if(error){res.writeHead(200,{...headers,'content-type':'application/json'});res.end(body);return;}
+        res.writeHead(200,{...headers,'content-type':'application/json','content-encoding':'gzip','content-length':bytes.length});res.end(bytes);
+      });return;}
+      res.writeHead(200,{...headers,'content-type':'application/json'});return res.end(body);
     }
     const asset = bundle.get(req.url);
     if (!asset) { res.writeHead(404, headers); return res.end(dsgReport('Not found')); }
@@ -484,19 +493,23 @@ export async function runDashboard(configPath, port) {
       void sparkInspection?.refresh().catch(()=>{});
 
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
-    finally { activity.update([...devices.values()].map(d=>({...d,endpoint_metrics:endpointTelemetry.snapshot(d.id)})),gateway?.workers||[],Date.now(),!!gatewayError);if(config.control_socket&&gateway?.direct_reserve?.enabled){const rows=(gateway?.workers??[]).filter(w=>!w.drained&&!w.quarantine).map(w=>{const e=endpointTelemetry.snapshot(w.id);return {id:w.id,connected:e?.connected===true,running:e?.running??0,at:e?.at??0};}).filter(r=>r.running>0||r.connected);void workerControl(config.control_socket,'/direct-activity',{rows:rows.filter(r=>r.running>0).length?rows:[]},{channel:'dashboard'}).catch(()=>{});}try{if(!isTesting())memory.observe(snapshot());}catch{/* A notebook fault cannot stop fleet polling. */}polling = false; }
+    finally { activity.update([...devices.values()].map(d=>({...d,endpoint_metrics:endpointTelemetry.snapshot(d.id)})),gateway?.workers||[],Date.now(),!!gatewayError);if(config.control_socket&&gateway?.direct_reserve?.enabled){const rows=(gateway?.workers??[]).filter(w=>!w.drained&&!w.quarantine).map(w=>{const e=endpointTelemetry.snapshot(w.id);return {id:w.id,connected:e?.connected===true,running:e?.running??0,at:e?.at??0};}).filter(r=>r.running>0||r.connected);void workerControl(config.control_socket,'/direct-activity',{rows:rows.filter(r=>r.running>0).length?rows:[]},{channel:'dashboard'}).catch(()=>{});}polling = false; }
   }
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const sparkInspection=managementEnabled?sparkInspectionSync(config,()=>workerControl(config.control_socket,'/spark-services')):null;
   const serverRecords=new ServerRecords(config.server_records_directory);
   const combinedHourglass=()=>{const saved=hourglassReports.snapshot(),runs=hourglass?.reportSnapshot(),trials=operations?.trialReports().reports??[];return {...saved,configured:saved.configured||!!runs||trials.length>0,reports:[...saved.reports,...(runs?.reports??[]),...trials],unavailable:[...saved.unavailable,...(runs?.unavailable??[])]};};
-  const snapshot = () => ({ hourglass_measurements:hourglass?.status()??{configured:false},hourglass_reports:combinedHourglass(),server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
+  let cachedSnapshot=null,snapshotAt=0;
+  const snapshot = () => {
+    const now=Date.now();if(cachedSnapshot&&now-snapshotAt<1000)return cachedSnapshot;
+    snapshotAt=now;return cachedSnapshot=({ hourglass_measurements:hourglass?.status()??{configured:false},hourglass_reports:combinedHourglass(),server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),generation_alerts:requestHistory.generationEvidence.snapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
     fleet_power:powerTools?{enabled:isCapabilityEnabled('fleet_power'),control:true}:null,
     fleet_machines:powerWorkers().map(id=>({id,machine:machineGroup(id),scripts:['status','start','stop']})),
     devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Engine-log rates are measurements from configured log collectors; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+  };
   const isTesting=()=>continuityEnabled(config)&&testingSuspended(testingModeFile(config));
   const isCapabilityEnabled=key=>gateway?.genie_capabilities?.[key]!==false;
   operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});

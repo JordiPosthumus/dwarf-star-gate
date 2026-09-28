@@ -38,7 +38,7 @@ async function changePriority(job,select){
   finally{editing=false;select.blur();await load(true);}
 }
 async function load(force=false){
-  if(loading||editing||(!force&&$('jobs-rows').contains(document.activeElement)))return;loading=true;
+  if(loading||editing||(!force&&(document.hidden||$('view-activity').hidden||$('jobs-rows').contains(document.activeElement))))return;loading=true;
   try{
     const response=await fetch('/api/current-jobs',{signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error();const next=await response.json();
     if(!editing&&(force||!$('jobs-rows').contains(document.activeElement)))render(next);
@@ -46,4 +46,6 @@ async function load(force=false){
   catch{$('jobs-status').textContent='Current Jobs unavailable · displayed observations are stale';}
   finally{loading=false;}
 }
+new MutationObserver(()=>void load()).observe($('view-activity'),{attributes:true,attributeFilter:['hidden']});
+document.addEventListener('visibilitychange',()=>void load());
 void load();setInterval(()=>void load(),5000);

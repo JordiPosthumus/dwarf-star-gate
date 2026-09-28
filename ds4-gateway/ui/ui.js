@@ -843,7 +843,7 @@ function renderLanSharing(value){
   $('lan-sharing-ip').value=value.ip_urls?.[0]??'';
 }
 async function loadLanSharing(){
-  if(lanSharingBusy)return;
+  if(lanSharingBusy||document.hidden||$('view-settings').hidden)return;
   try{const response=await fetch('/api/lan-sharing',{signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error();renderLanSharing(await response.json());}
   catch{const toggle=$('lan-sharing-toggle');if(toggle)toggle.disabled=true;}
 }
@@ -880,6 +880,7 @@ async function toggleTesting(){
 }
 async function poll() {
   try {
+    if(document.hidden)return;
     const [r]=await Promise.all([fetch('/api/status',{cache:'no-store',signal:AbortSignal.timeout(5000)}),
       fetch('/api/fleet-workloads',{cache:'no-store',signal:AbortSignal.timeout(2000)}).then(async response=>{if(!response.ok)throw Error();fleetWorkloads=await response.json();fleetWorkloadsUnavailable=false;}).catch(()=>{fleetWorkloadsUnavailable=true;})]);
     if(!r.ok)throw Error();render(await r.json());
@@ -1143,6 +1144,7 @@ function setupWorkspaceTabs(){
 poll();
 $('lan-sharing-toggle')?.addEventListener('click',()=>void toggleLanSharing());
 for(const id of ['lan-sharing-url','lan-sharing-key','lan-sharing-ip'])$(id)?.addEventListener('click',event=>event.currentTarget.select());
+new MutationObserver(()=>void loadLanSharing()).observe($('view-settings'),{attributes:true,attributeFilter:['hidden']});
 void loadLanSharing();setInterval(()=>{if(!document.hidden)void loadLanSharing();},5000);
 $('testing-toggle')?.addEventListener('click',()=>void toggleTesting());
 $('testing-url')?.addEventListener('click',event=>event.currentTarget.select());
@@ -1166,7 +1168,7 @@ $('cache-cost-form').addEventListener('submit',async event=>{
   catch(e){$('cache-cost-result').textContent=e.message;}
   finally{button.disabled=false;cacheCostBusy=false;}
 });
-void loadRequestHistory();setInterval(()=>{if(!document.hidden)void loadRequestHistory();},10000);
+void loadRequestHistory();setInterval(()=>{if(!document.hidden&&(!$('view-fleet').hidden||!$('view-analytics').hidden))void loadRequestHistory();},10000);
 function renderRecovery(state) {
   recoveryState=state;
   $('recovery-status').textContent=!state?.configured?'Not configured. Endpoint registration alone grants no restart authority.':`${state.automatic?'Automatic recovery ON · GG + known-fatal watcher':'Automatic recovery OFF · operator recovery available'} · verified profile hand-back ${state.profile_handback_automatic?'ON':'OFF'}`;

@@ -57,3 +57,15 @@ test('a named pipe record is rejected promptly without waiting for a writer or r
  const child=spawnSync(process.execPath,['--input-type=module','-e',`import {ServerRecords} from ${JSON.stringify(module)};console.log(JSON.stringify(new ServerRecords(${JSON.stringify(root)}).snapshot(['example'])));`],{encoding:'utf8',timeout:2000});
  assert.equal(child.error,undefined);assert.equal(child.status,0);assert.deepEqual(JSON.parse(child.stdout).unavailable,[{worker_id:'example',kind:'proposed'}]);assert.equal(fs.lstatSync(file).isFIFO(),true);
 });
+
+test('unchanged records reuse summaries, edits invalidate them, and callers cannot alter the cache',t=>{
+ const {reader,write,root}=fixture(t);write(record());let reads=0;const original=fs.readSync;
+ t.mock.method(fs,'readSync',(...args)=>{reads++;return original(...args);});
+ const before=reader.snapshot(['example']);const first=reads;assert.ok(first>0);
+ before.records[0].observed.runtime.name='caller mutation';
+ assert.equal(reader.snapshot(['example']).records[0].observed.runtime.name,'vLLM');assert.equal(reads,first);
+ const file=path.join(root,'observed/example.json'),stat=fs.statSync(file);
+ write({...record(),runtime:{name:'oMLX',version:'example-version'}});fs.utimesSync(file,stat.atime,stat.mtime);
+ assert.equal(reader.snapshot(['example']).records[0].observed.runtime.name,'oMLX');assert.ok(reads>first);
+ fs.unlinkSync(file);assert.equal(reader.snapshot(['example']).records[0].observed,null);
+});
