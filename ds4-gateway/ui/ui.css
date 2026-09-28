@@ -77,12 +77,12 @@
 .device-live .remaining-estimate{font-size:10px;color:var(--muted);white-space:nowrap}
 
 /* Always-visible utilization strip on the card face. */
-.device-bar{margin-top:8px;display:flex;align-items:center;gap:8px}
+.device-bar{margin-top:8px;display:grid;grid-template-columns:max-content minmax(0,1fr) 3rem;align-items:center;gap:8px}
 .device-bar .bar-label{font-size:8px;letter-spacing:1px;color:var(--muted);white-space:nowrap}
 .device-bar .activity-timeline{flex:1;margin:0;height:12px;min-width:0}
 
 .device-bar .activity-timeline .lane-divider{stroke:var(--bg);stroke-width:1.5;vector-effect:non-scaling-stroke}
-.device-bar .bar-note{font-size:8px;color:var(--muted);white-space:nowrap;cursor:help}
+.device-bar .bar-note{box-sizing:border-box;text-align:center;font-size:8px;color:var(--muted);white-space:nowrap;cursor:help}
 .device-bar .bar-note.pair{color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:0 5px;line-height:1.6}
 .timeline-pair-note{display:none}
 .device-minicharts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:7px}

@@ -107,7 +107,6 @@ button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visib
 
 .activity-timeline .prefill-evidence-marker{stroke:var(--phase-prefill);stroke-width:2;vector-effect:non-scaling-stroke}
 
-.timeline-evidence-note{font-size:10px;color:var(--muted);margin-top:4px}
 
 .agent-watch li[data-activity="tool"] span{color:var(--phase-tool)}.agent-watch li[data-activity="tool"] span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--phase-tool);margin-right:7px}.agent-watch li[data-activity="idle"] span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--phase-idle);margin-right:7px}
 
